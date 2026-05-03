@@ -11,7 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // --- CONFIGURACIÓN DE SUPABASE CON SERVICE_ROLE ---
-const supabaseUrl = 'https://klicotyrfitmpltrqewh.supabase.co'; // Extraída de tu token
+const supabaseUrl = 'https://klicotyrfitmpltrqewh.supabase.co'; 
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtsaWNvdHlyZml0bXBsdHJxZXdoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTA4NDEyMCwiZXhwIjoyMDkwNjYwMTIwfQ.KUoy-udkq2cKN_zfBUJtASOgMYJ9zJBq4CXxP-cektg'; 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -44,7 +44,7 @@ async function startServer() {
     if (!token) return res.status(400).json({ error: "Token no recibido" });
 
     try {
-      console.log("1. Rebiendo token de Transbank...");
+      console.log("1. Recibiendo token de Transbank...");
       const commitResponse = await tx.commit(token);
 
       if (commitResponse.response_code === 0) {
@@ -55,21 +55,20 @@ async function startServer() {
           .from('ventas')
           .insert([{
             total_venta: commitResponse.amount,
-            id_cliente: commitResponse.session_id, // DEBE SER UN UUID
+            id_cliente: commitResponse.session_id, 
             estado: 'completado'
           }])
           .select();
 
         if (errorVenta) {
           console.error("❌ ERROR TABLA VENTAS:", errorVenta.message);
-          console.error("Detalles:", errorVenta.details);
           throw errorVenta;
         }
 
         const nuevaVenta = ventaData[0];
         console.log(`3. ✨ Venta ${nuevaVenta.id_venta} creada.`);
 
-        // B. Insertar Detalles
+        // B. Insertar Detalles e Actualizar Stock
         if (cartItems && cartItems.length > 0) {
           const detalles = cartItems.map((item: any) => ({
             id_venta: nuevaVenta.id_venta,
@@ -84,9 +83,32 @@ async function startServer() {
 
           if (errorDetalle) {
             console.error("❌ ERROR TABLA DETALLES:", errorDetalle.message);
-            console.error("Detalles:", errorDetalle.details);
           } else {
             console.log("4. 📦 Detalles guardados con éxito.");
+
+            // C. DESCUENTO AUTOMÁTICO DE STOCK
+            console.log("5. 📉 Actualizando inventario...");
+            for (const item of cartItems) {
+              // Usamos una función RPC de Supabase para restar de forma segura
+              const { error: errorStock } = await supabase
+                .rpc('discount_stock', { 
+                  row_id: item.id, 
+                  quantity_to_subtract: item.quantity 
+                });
+
+              if (errorStock) {
+                console.error(`⚠️ No se pudo descontar stock para el producto ${item.id}:`, errorStock.message);
+                
+                // Opción B: Si no tienes el RPC creado, intenta actualización directa:
+                /*
+                const { data: currentItem } = await supabase.from('inventario').select('stock').eq('id_alimento', item.id).single();
+                if (currentItem) {
+                  await supabase.from('inventario').update({ stock: currentItem.stock - item.quantity }).eq('id_alimento', item.id);
+                }
+                */
+              }
+            }
+            console.log("✅ Proceso de stock finalizado.");
           }
         }
       } else {
@@ -101,7 +123,6 @@ async function startServer() {
     }
   });
 
-  // Middleware de Vite (mantener igual...)
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);

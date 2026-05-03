@@ -68,29 +68,31 @@ export default function App() {
     }
   }, []);
 
-  // --- FUNCIÓN ACTUALIZADA PARA ENVIAR EL CARRITO ---
+  // --- FUNCIÓN PARA CONFIRMAR PAGO Y REGISTRAR VENTA/STOCK ---
   const confirmarPago = async (token: string) => {
     try {
-      // Recuperamos el carrito que guardamos antes de ir a Webpay
+      // Recuperamos el carrito guardado en localStorage antes de ir a Transbank
       const pendingCart = JSON.parse(localStorage.getItem('pending_cart') || '[]');
       
-      console.log("🔍 Validando pago y registrando venta...");
+      console.log("🔍 Validando pago y actualizando inventario...");
       
       const response = await fetch('http://localhost:3000/api/confirmar-pago', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           token,
-          cartItems: pendingCart // ENVIAMOS EL DETALLE AL SERVIDOR
+          cartItems: pendingCart 
         })
       });
       
       const result = await response.json();
 
       if (result.success) {
-        alert("¡Compra realizada con éxito! La venta ha sido registrada.");
+        alert("¡Compra realizada con éxito! El inventario ha sido actualizado.");
         setCartItems([]);
         localStorage.removeItem('pending_cart');
+        // Refrescamos los productos para mostrar el nuevo stock
+        fetchProducts();
       } else {
         alert("El pago fue rechazado o cancelado.");
       }
@@ -98,6 +100,7 @@ export default function App() {
       console.error("❌ Error en confirmación:", error);
       alert("Error de conexión con el servidor.");
     } finally {
+      // Limpiamos la URL y volvemos al inicio
       window.history.replaceState({}, document.title, "/");
       setCurrentView("home");
     }
@@ -115,13 +118,14 @@ export default function App() {
           image: item.imagen_url || '/images/Master-Dog-Adulto-Carne.png', 
           category: (item.categoria || 'perros').toLowerCase(),
           description: item.marca || 'Nutrición Premium',
-          stock: item.stock || 10 
+          stock: item.stock || 0 // Muestra el stock real de la BD
         }));
         setProducts(dbProducts);
       } else {
         setProducts(LOCAL_PRODUCTS);
       }
     } catch (err) {
+      console.error("Error fetching products:", err);
       setProducts(LOCAL_PRODUCTS);
     }
   };
@@ -161,17 +165,17 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           buyOrder: buyOrder,
-          sessionId: session.user.id,
+          sessionId: session.user.id, // Enviamos el UUID del usuario
           total: totalVenta
         })
       });
 
-      if (!response.ok) throw new Error("Error en el servidor");
+      if (!response.ok) throw new Error("Error en el servidor al contactar con Transbank");
 
       const data = await response.json();
 
       if (data.url && data.token) {
-        // GUARDAMOS EL CARRITO ANTES DE SALIR DE LA APP
+        // MUY IMPORTANTE: Guardamos el carrito para recuperarlo al volver de Transbank
         localStorage.setItem('pending_cart', JSON.stringify(cartItems));
         
         const form = document.createElement('form');
@@ -186,7 +190,7 @@ export default function App() {
         form.submit();
       }
     } catch (error: any) {
-      alert(`Error: ${error.message}`);
+      alert(`Error al iniciar el pago: ${error.message}`);
     } finally {
       setIsProcessing(false);
     }
@@ -201,6 +205,10 @@ export default function App() {
   }, [activeSearch, selectedFilter, products]);
 
   const addToCart = (product: Product) => {
+    if (product.stock <= 0) {
+      alert("Producto sin stock disponible.");
+      return;
+    }
     setCartItems(prev => {
       const existing = prev.find(item => item.id === product.id);
       if (existing) return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
@@ -271,7 +279,7 @@ export default function App() {
                <div className="py-20 text-center">
                  <div className="animate-spin h-10 w-10 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
                  <h2 className="text-2xl font-bold mb-4">Procesando tu pago...</h2>
-                 <p className="text-gray-500">Estamos validando la transacción con Transbank y registrando tu pedido.</p>
+                 <p className="text-gray-500">Estamos validando la transacción y actualizando el stock.</p>
                </div>
              ) : (
               <section className="py-12 bg-gray-50 px-4 min-h-screen text-left">
@@ -340,8 +348,9 @@ export default function App() {
   );
 }
 
+// Subcomponente ProductCard incluido dentro de App.tsx para facilitar el pegado
 function ProductCard({ product, onAdd }: { product: any; onAdd: () => void }) {
-  const isOutOfStock = product.stock === 0;
+  const isOutOfStock = product.stock <= 0;
 
   return (
     <div className={`bg-white rounded-3xl p-5 shadow-sm border border-gray-100 flex flex-col h-full transition-all text-left ${isOutOfStock ? 'opacity-60' : 'hover:shadow-xl hover:-translate-y-1'}`}>
@@ -359,7 +368,10 @@ function ProductCard({ product, onAdd }: { product: any; onAdd: () => void }) {
         />
       </div>
       <div className="flex-grow">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-orange-500 bg-orange-50 px-2 py-1 rounded-md">{product.category}</span>
+        <div className="flex justify-between items-start">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-orange-500 bg-orange-50 px-2 py-1 rounded-md">{product.category}</span>
+          <span className={`text-[10px] font-bold ${product.stock < 5 ? 'text-red-500' : 'text-gray-400'}`}>Stock: {product.stock}</span>
+        </div>
         <h3 className="font-bold text-gray-900 mt-2 mb-1 line-clamp-2">{product.name}</h3>
       </div>
       <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-50">
