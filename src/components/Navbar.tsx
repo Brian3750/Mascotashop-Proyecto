@@ -4,6 +4,7 @@ import { cn } from "../lib/utils";
 
 interface NavbarProps {
   userSession: any; // Prop para recibir la sesión de Supabase
+  isAdmin: boolean;
   onLoginClick: () => void;
   onLogoutClick: () => void; // Prop para cerrar sesión
   onHomeClick: () => void;
@@ -16,6 +17,7 @@ interface NavbarProps {
 
 export default function Navbar({ 
   userSession,
+  isAdmin,
   onLoginClick, 
   onLogoutClick,
   onHomeClick, 
@@ -60,13 +62,15 @@ export default function Navbar({
 
           {/* Actions */}
           <div className="flex items-center gap-2 sm:gap-4">
-            <button
-              onClick={onAdminClick}
-              className="p-2 text-gray-300 hover:text-orange-500 transition-colors"
-              title="Administración"
-            >
-              <Settings className="h-5 w-5" />
-            </button>
+            {isAdmin && (
+              <button
+                onClick={onAdminClick}
+                className="p-2 text-gray-300 hover:text-orange-500 transition-colors"
+                title="Administración"
+              >
+                <Settings className="h-5 w-5" />
+              </button>
+            )}
 
             {/* LÓGICA DINÁMICA DE USUARIO */}
             {userSession ? (
@@ -131,12 +135,14 @@ export default function Navbar({
                 <LogOut className="h-5 w-5" /> Cerrar Sesión
               </button>
             )}
-            <button 
-              onClick={() => { onAdminClick(); setIsMenuOpen(false); }}
-              className="p-4 bg-orange-50 text-orange-600 rounded-xl text-center font-medium"
-            >
-              Panel de Gestión
-            </button>
+            {isAdmin && (
+              <button 
+                onClick={() => { onAdminClick(); setIsMenuOpen(false); }}
+                className="p-4 bg-orange-50 text-orange-600 rounded-xl text-center font-medium"
+              >
+                Panel de Gestión
+              </button>
+            )}
           </div>
         </div>
       )}

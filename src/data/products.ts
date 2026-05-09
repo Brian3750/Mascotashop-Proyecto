@@ -26,6 +26,7 @@ export const PRODUCTS: Product[] = [
     price: 30000,
     image: "/images/Master-Dog-Adulto-Carne.png",
     description: "Nutrición balanceada para perros adultos de todas las razas.",
+    stock: 0
   },
   {
     id: "p2",
@@ -34,6 +35,7 @@ export const PRODUCTS: Product[] = [
     price: 6900,
     image: "/images/Snack-de-Pollo-Deshidratado.webp",
     description: "Ayuda a mantener contento a tu perro.",
+    stock: 0
   },
     {
     id: "p3",
@@ -42,6 +44,7 @@ export const PRODUCTS: Product[] = [
     price: 15000,
       image: "/images/Cama-tipo-sofa.webp",
     description: "Tu perro podra dormir cómodo.",
+    stock: 0
   },
   // GATOS
   {
@@ -51,6 +54,7 @@ export const PRODUCTS: Product[] = [
     price: 9890,
     image: "/images/arena.webp",
     description: "Con esta arena no tendra ni una preocupacion.",
+    stock: 0
   },
   {
     id: "g2",
@@ -59,6 +63,7 @@ export const PRODUCTS: Product[] = [
     price: 5690,
     image: "/images/master-cat.png",
     description: "La mejor comida para tu gato.",
+    stock: 0
   },
   {
     id: "g3",
@@ -67,6 +72,7 @@ export const PRODUCTS: Product[] = [
     price: 9990,
     image: "/images/churu-variedades.jpg",
     description: "Pack ahorro con 20 tubos de Churu.",
+    stock: 0
   },
   // HAMSTER
   {
@@ -76,6 +82,7 @@ export const PRODUCTS: Product[] = [
     price: 4500,
     image: "/images/comida-hamster.jpg",
     description: "Variedad de granos y semillas para una dieta completa.",
+    stock: 0
   },
    {
     id: "h2",
@@ -84,6 +91,7 @@ export const PRODUCTS: Product[] = [
     price: 5000,
     image: "/images/Bola-ejercicio.webp",
     description: "Distracción para tu hamster.",
+    stock: 0
   },
    {
     id: "h3",
@@ -92,6 +100,7 @@ export const PRODUCTS: Product[] = [
     price: 3500,
     image: "/images/Tobogan-hamster.webp",
     description: "Mucha diversión para tu hamster.",
+    stock: 0
   },
   // CONEJOS
   {
@@ -101,6 +110,7 @@ export const PRODUCTS: Product[] = [
     price: 3000,
     image: "/images/heno-peludos.jpg",
     description: "Heno fresco y crujiente para conejos.",
+    stock: 0
   },
    {
     id: "c2",
@@ -109,6 +119,7 @@ export const PRODUCTS: Product[] = [
     price: 60000,
     image: "/images/Jaula-para-conejos.webp",
     description: "La mejor comodidad para tu conejo.",
+    stock: 0
   },
    {
     id: "c3",
@@ -117,6 +128,7 @@ export const PRODUCTS: Product[] = [
     price: 15000,
     image: "/images/Tunel-para-conejos.jpeg",
     description: "Mucha divercion para tu conejo.",
+    stock: 0
   },
   // PECES
   {
@@ -126,6 +138,7 @@ export const PRODUCTS: Product[] = [
     price: 60000,
     image: "/images/Kit-pecera.webp",
     description: "La mejor opcion si quieres empezar con una pecera.",
+    stock: 0
   },
    {
     id: "p2",
@@ -134,6 +147,7 @@ export const PRODUCTS: Product[] = [
     price: 3250,
     image: "/images/alimento-peces.webp",
     description: "Alimento flotante que no enturbia el agua.",
+    stock: 0
   },
      {
     id: "p3",
@@ -142,6 +156,7 @@ export const PRODUCTS: Product[] = [
     price: 5990,
     image: "/images/Red-peces-acuario.jpeg",
     description: "Red para peces tu mejor opcion.",
+    stock: 0
   },
   // AVES
   {
@@ -151,6 +166,7 @@ export const PRODUCTS: Product[] = [
     price: 2800,
     image: "/images/comida-aves.png",
     description: "El mejor alimento para tu catita.",
+    stock: 0
   },
     {
     id: "a2",
@@ -159,6 +175,7 @@ export const PRODUCTS: Product[] = [
     price: 25000,
     image: "/images/jaula-aves.webp",
     description: "El mejor alimento para tu catita.",
+    stock: 0
   },
       {
     id: "a3",
@@ -167,5 +184,6 @@ export const PRODUCTS: Product[] = [
     price: 2500,
     image: "/images/bebedor-agua-aves.webp",
     description: "El mejor alimento para tu catita.",
+    stock: 0
   },
 ];

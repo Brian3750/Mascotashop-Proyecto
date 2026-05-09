@@ -57,6 +57,15 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Sincronizar activeSearch con searchQuery para el filtrado
+  useEffect(() => {
+    setActiveSearch(searchQuery);
+    // Si hay una búsqueda y no estamos en catálogo, ir al catálogo
+    if (searchQuery.trim() && currentView === "home") {
+      setCurrentView("catalog");
+    }
+  }, [searchQuery, currentView]);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tokenWs = params.get('token_ws');
@@ -223,9 +232,11 @@ export default function App() {
         onViewCatalog={(cat) => { setSelectedFilter(cat); setCurrentView("catalog"); window.scrollTo(0, 0); }} 
         onAddToCart={addToCart} 
       />
-      <section className="py-12 bg-white">
-        <RegistroMascota />
-      </section>
+      {session && session.user?.email !== ADMIN_EMAIL && (
+        <section className="py-12 bg-white">
+          <RegistroMascota />
+        </section>
+      )}
       <section className="py-16 bg-gray-50">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex items-center justify-between mb-10 border-b pb-4">
@@ -263,6 +274,7 @@ export default function App() {
         <>
           <Navbar 
             userSession={session}
+            isAdmin={session && session.user?.email === ADMIN_EMAIL}
             onLoginClick={() => setIsLoginOpen(true)} 
             onLogoutClick={handleLogout}
             onHomeClick={() => {setCurrentView("home"); setIsAdmin(false); window.location.search = "";}}
