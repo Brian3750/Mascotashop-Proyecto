@@ -7,6 +7,7 @@ interface NavbarProps {
   isAdmin: boolean;
   onLoginClick: () => void;
   onLogoutClick: () => void; // Prop para cerrar sesión
+  onProfileClick: () => void; // Prop para ir al perfil
   onHomeClick: () => void;
   onCartClick: () => void;
   onAdminClick: () => void; 
@@ -20,6 +21,7 @@ export default function Navbar({
   isAdmin,
   onLoginClick, 
   onLogoutClick,
+  onProfileClick,
   onHomeClick, 
   onCartClick, 
   onAdminClick, 
@@ -27,6 +29,7 @@ export default function Navbar({
   setSearchQuery, 
   cartCount 
 }: NavbarProps) {
+  // CORRECCIÓN: Definición correcta del estado para abrir/cerrar el menú móvil
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   return (
@@ -74,13 +77,23 @@ export default function Navbar({
 
             {/* LÓGICA DINÁMICA DE USUARIO */}
             {userSession ? (
-              <button
-                onClick={onLogoutClick}
-                className="flex items-center gap-2 text-gray-600 hover:text-red-500 transition-colors"
-              >
-                <LogOut className="h-6 w-6" />
-                <span className="hidden sm:block font-medium">Salir</span>
-              </button>
+              <>
+                <button
+                  onClick={onProfileClick}
+                  className="flex items-center gap-2 text-gray-600 hover:text-orange-500 transition-colors"
+                  title="Mi Perfil"
+                >
+                  <User className="h-6 w-6" />
+                  <span className="hidden sm:block font-medium">Perfil</span>
+                </button>
+                <button
+                  onClick={onLogoutClick}
+                  className="flex items-center gap-2 text-gray-600 hover:text-red-500 transition-colors"
+                >
+                  <LogOut className="h-6 w-6" />
+                  <span className="hidden sm:block font-medium">Salir</span>
+                </button>
+              </>
             ) : (
               <button
                 onClick={onLoginClick}
@@ -128,12 +141,20 @@ export default function Navbar({
           </div>
           <div className="flex flex-col gap-2">
             {userSession && (
-              <button 
-                onClick={() => { onLogoutClick(); setIsMenuOpen(false); }}
-                className="flex items-center justify-center gap-2 p-3 bg-red-50 text-red-600 rounded-xl font-medium"
-              >
-                <LogOut className="h-5 w-5" /> Cerrar Sesión
-              </button>
+              <>
+                <button 
+                  onClick={() => { onProfileClick(); setIsMenuOpen(false); }}
+                  className="flex items-center justify-center gap-2 p-3 bg-orange-50 text-orange-600 rounded-xl font-medium"
+                >
+                  <User className="h-5 w-5" /> Mi Perfil
+                </button>
+                <button 
+                  onClick={() => { onLogoutClick(); setIsMenuOpen(false); }}
+                  className="flex items-center justify-center gap-2 p-3 bg-red-50 text-red-600 rounded-xl font-medium"
+                >
+                  <LogOut className="h-5 w-5" /> Cerrar Sesión
+                </button>
+              </>
             )}
             {isAdmin && (
               <button 

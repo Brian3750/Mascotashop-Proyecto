@@ -4,6 +4,7 @@ import Hero from "./components/Hero";
 import LoginModal from "./components/LoginModal";
 import CartDrawer, { CartItem } from "./components/CartDrawer";
 import RegistroMascota from './components/RegistroMascota'; 
+import UserProfile from './components/PerfilUsuario';
 import WhatsAppButton from './components/WhatsAppButton'; 
 import AdminPanel from './components/AdminPanel'; 
 import { PRODUCTS as LOCAL_PRODUCTS, Product } from "./data/products"; 
@@ -21,6 +22,8 @@ import {
 } from "lucide-react";
 
 import { supabase } from "./lib/supabaseClient";
+// --- IMPORTACIÓN DE TRAZABILIDAD NO SQL ---
+import { registrarInteraccionMongo } from "./lib/analytics";
 
 const ADMIN_EMAIL = "brian.contreras@inacapmail.cl";
 
@@ -29,7 +32,7 @@ export default function App() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState(""); 
   const [activeSearch, setActiveSearch] = useState(""); 
-  const [currentView, setCurrentView] = useState<"home" | "catalog" | "confirmacion">("home");
+  const [currentView, setCurrentView] = useState<"home" | "catalog" | "confirmacion" | "profile">("home");
   const [selectedFilter, setSelectedFilter] = useState<string>("all");
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -277,6 +280,7 @@ export default function App() {
             isAdmin={session && session.user?.email === ADMIN_EMAIL}
             onLoginClick={() => setIsLoginOpen(true)} 
             onLogoutClick={handleLogout}
+            onProfileClick={() => {setCurrentView("profile"); window.scrollTo(0, 0);}}
             onHomeClick={() => {setCurrentView("home"); setIsAdmin(false); window.location.search = "";}}
             onCartClick={() => setIsCartOpen(true)}
             onAdminClick={handleAdminAccess}
@@ -292,6 +296,13 @@ export default function App() {
                  <div className="animate-spin h-10 w-10 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
                  <h2 className="text-2xl font-bold mb-4">Procesando tu pago...</h2>
                  <p className="text-gray-500">Estamos validando la transacción y actualizando el stock.</p>
+               </div>
+             ) : currentView === "profile" ? (
+               <div className="bg-gray-50 min-h-screen pt-8">
+                 <button onClick={() => {setCurrentView("home"); setActiveSearch("");}} className="ml-8 flex items-center gap-2 mb-8 text-gray-500 font-bold hover:text-orange-500 transition-colors">
+                   <ArrowLeft /> Volver al inicio
+                 </button>
+                 <UserProfile />
                </div>
              ) : (
               <section className="py-12 bg-gray-50 px-4 min-h-screen text-left">
@@ -360,12 +371,29 @@ export default function App() {
   );
 }
 
-// Subcomponente ProductCard incluido dentro de App.tsx para facilitar el pegado
+// Subcomponente ProductCard modificado con Trazabilidad Dinámica Real
 function ProductCard({ product, onAdd }: { product: any; onAdd: () => void }) {
   const isOutOfStock = product.stock <= 0;
 
+  // Manejador del clic en el cuerpo de la tarjeta (Interacción de visualización)
+  const handleCardClick = () => {
+    if (!isOutOfStock) {
+      console.log(`🎯 Trazando vista del producto: ${product.name}`);
+      registrarInteraccionMongo("visualizacion_producto", {
+        id: product.id,
+        nombre: product.name,
+        categoria: product.category,
+        stock: product.stock,
+        precio: product.price
+      });
+    }
+  };
+
   return (
-    <div className={`bg-white rounded-3xl p-5 shadow-sm border border-gray-100 flex flex-col h-full transition-all text-left ${isOutOfStock ? 'opacity-60' : 'hover:shadow-xl hover:-translate-y-1'}`}>
+    <div 
+      onClick={handleCardClick}
+      className={`bg-white rounded-3xl p-5 shadow-sm border border-gray-100 flex flex-col h-full transition-all text-left ${isOutOfStock ? 'opacity-60' : 'hover:shadow-xl hover:-translate-y-1 cursor-pointer'}`}
+    >
       <div className="relative aspect-square rounded-2xl overflow-hidden mb-4 bg-gray-50 flex items-center justify-center p-2">
         {isOutOfStock && (
           <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10">
@@ -389,7 +417,22 @@ function ProductCard({ product, onAdd }: { product: any; onAdd: () => void }) {
       <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-50">
         <span className="text-xl font-black text-gray-900">{formatCLP(product.price)}</span>
         <button 
-          onClick={onAdd} 
+          onClick={(e) => {
+            e.stopPropagation(); // Evita ejecutar el onClick del contenedor padre
+            
+            // 1. Ejecuta la función nativa que mete el producto real en el carrito
+            onAdd(); 
+            
+            // 2. Envía la traza NoSQL en tiempo real a MongoDB Atlas
+            console.log(`🛒 Trazando clic en añadir al carrito: ${product.name}`);
+            registrarInteraccionMongo("click_añadir_carrito", {
+              id: product.id,
+              nombre: product.name,
+              categoria: product.category,
+              stock: product.stock,
+              precio: product.price
+            });
+          }} 
           disabled={isOutOfStock}
           className={`${isOutOfStock ? 'bg-gray-300' : 'bg-orange-500 hover:bg-orange-600 shadow-orange-200'} text-white p-3 rounded-xl transition-all active:scale-90`}
         >

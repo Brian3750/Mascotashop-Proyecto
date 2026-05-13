@@ -40,14 +40,14 @@ export default function RegistroMascota() {
         return;
       }
 
-      // 2. Insertamos en la tabla 'mascotas' usando el ID del usuario como 'id_cliente'
+      // 2. Insertamos en la tabla 'mascotas' usando el ID del usuario como 'id_usuario'
       const { error } = await supabase.from('mascotas').insert([
         { 
           nombre: formData.nombre,
           edad: parseInt(formData.edad),
           id_especie: parseInt(formData.id_especie),
           id_tamano: parseInt(formData.id_tamano),
-          id_cliente: user.id // <--- Relación automática con el dueño
+          id_usuario: user.id // <--- Relación automática con el dueño
         }
       ]);
 

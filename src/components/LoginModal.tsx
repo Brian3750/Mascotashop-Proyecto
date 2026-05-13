@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Mail, Lock, User, CreditCard, Phone, Loader2 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { validarRutChileno } from "../lib/validaRut";
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -45,6 +46,13 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
     setError("");
     setLoading(true);
     try {
+      // Validar RUT chileno
+      if (!validarRutChileno(rut)) {
+        setError("El RUT ingresado no es válido. Verifica el formato (ej: 12345678-9).");
+        setLoading(false);
+        return;
+      }
+
       const { data, error: authError } = await supabase.auth.signUp({
         email,
         password,
