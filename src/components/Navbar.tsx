@@ -78,14 +78,16 @@ export default function Navbar({
             {/* LÓGICA DINÁMICA DE USUARIO */}
             {userSession ? (
               <>
-                <button
-                  onClick={onProfileClick}
-                  className="flex items-center gap-2 text-gray-600 hover:text-orange-500 transition-colors"
-                  title="Mi Perfil"
-                >
-                  <User className="h-6 w-6" />
-                  <span className="hidden sm:block font-medium">Perfil</span>
-                </button>
+                {!isAdmin && (
+                  <button
+                    onClick={onProfileClick}
+                    className="flex items-center gap-2 text-gray-600 hover:text-orange-500 transition-colors"
+                    title="Mi Perfil"
+                  >
+                    <User className="h-6 w-6" />
+                    <span className="hidden sm:block font-medium">Perfil</span>
+                  </button>
+                )}
                 <button
                   onClick={onLogoutClick}
                   className="flex items-center gap-2 text-gray-600 hover:text-red-500 transition-colors"
@@ -142,12 +144,14 @@ export default function Navbar({
           <div className="flex flex-col gap-2">
             {userSession && (
               <>
-                <button 
-                  onClick={() => { onProfileClick(); setIsMenuOpen(false); }}
-                  className="flex items-center justify-center gap-2 p-3 bg-orange-50 text-orange-600 rounded-xl font-medium"
-                >
-                  <User className="h-5 w-5" /> Mi Perfil
-                </button>
+                {!isAdmin && (
+                  <button 
+                    onClick={() => { onProfileClick(); setIsMenuOpen(false); }}
+                    className="flex items-center justify-center gap-2 p-3 bg-orange-50 text-orange-600 rounded-xl font-medium"
+                  >
+                    <User className="h-5 w-5" /> Mi Perfil
+                  </button>
+                )}
                 <button 
                   onClick={() => { onLogoutClick(); setIsMenuOpen(false); }}
                   className="flex items-center justify-center gap-2 p-3 bg-red-50 text-red-600 rounded-xl font-medium"

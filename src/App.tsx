@@ -18,7 +18,8 @@ import {
   Mail, 
   Facebook, 
   Instagram, 
-  Twitter 
+  Twitter,
+  LogOut
 } from "lucide-react";
 
 import { supabase } from "./lib/supabaseClient";
@@ -32,7 +33,7 @@ export default function App() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState(""); 
   const [activeSearch, setActiveSearch] = useState(""); 
-  const [currentView, setCurrentView] = useState<"home" | "catalog" | "confirmacion" | "profile">("home");
+  const [currentView, setCurrentView] = useState<"home" | "catalog" | "confirmacion" | "profile" | "admin">("home");
   const [selectedFilter, setSelectedFilter] = useState<string>("all");
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -48,17 +49,61 @@ export default function App() {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
+      // Si hay sesión y es admin, ir directo al panel
+      if (session && session.user?.email === ADMIN_EMAIL) {
+        setIsAdmin(true);
+        setCurrentView('admin');
+        window.history.pushState({}, '', '/admin');
+      }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (!session || session.user.email !== ADMIN_EMAIL) {
+      // Cuando se autentica un admin, ir direto al panel
+      if (session && session.user.email === ADMIN_EMAIL) {
+        setIsAdmin(true);
+        setCurrentView('admin');
+        window.history.pushState({}, '', '/admin');
+      } else {
         setIsAdmin(false);
+        setCurrentView('home');
+        if (window.location.pathname === '/admin') {
+          window.history.pushState({}, '', '/');
+        }
       }
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    const syncAdminRoute = () => {
+      if (window.location.pathname === '/admin') {
+        if (session && session.user?.email === ADMIN_EMAIL) {
+          setIsAdmin(true);
+          setCurrentView('admin');
+        } else {
+          setIsAdmin(false);
+          setCurrentView('home');
+          window.history.replaceState({}, document.title, '/');
+        }
+      }
+    };
+
+    syncAdminRoute();
+
+    const handlePopState = () => {
+      if (window.location.pathname === '/admin') {
+        syncAdminRoute();
+      } else {
+        setIsAdmin(false);
+        setCurrentView('home');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [session]);
 
   // Sincronizar activeSearch con searchQuery para el filtrado
   useEffect(() => {
@@ -145,6 +190,8 @@ export default function App() {
   const handleAdminAccess = () => {
     if (session && session.user.email === ADMIN_EMAIL) {
       setIsAdmin(true);
+      setCurrentView('admin');
+      window.history.pushState({}, '', '/admin');
     } else if (!session) {
       alert("Debes iniciar sesión como administrador.");
       setIsLoginOpen(true);
@@ -264,15 +311,42 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white flex flex-col font-sans">
       {isAdmin ? (
-        <div className="relative">
-          <AdminPanel />
-          <button 
-            onClick={() => setIsAdmin(false)}
-            className="fixed top-4 right-4 bg-gray-900 text-white px-4 py-2 rounded-2xl text-xs font-bold shadow-xl hover:bg-orange-500 transition-all z-50"
-          >
-            Cerrar Panel Admin
-          </button>
-        </div>
+        <>
+          {/* Navbar simplificado para Admin */}
+          <nav className="sticky top-0 z-50 bg-white border-b border-gray-100 shadow-sm">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex justify-between items-center h-16">
+                <button
+                  onClick={() => {}}
+                  className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+                >
+                  <div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center">
+                    <span className="text-white font-bold text-xl">M</span>
+                  </div>
+                  <span className="text-xl font-bold text-gray-900 hidden sm:block">
+                    Mascota<span className="text-orange-500">Shop</span>
+                  </span>
+                </button>
+
+                <div className="flex items-center gap-4">
+                  <span className="text-sm font-semibold text-orange-500">Panel Administrativo</span>
+                  <button
+                    onClick={() => { handleLogout(); setIsAdmin(false); setCurrentView('home'); window.history.pushState({}, '', '/'); }}
+                    className="flex items-center gap-2 text-gray-600 hover:text-red-500 transition-colors"
+                  >
+                    <LogOut className="h-6 w-6" />
+                    <span className="hidden sm:block font-medium">Salir</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </nav>
+
+          {/* Panel Admin */}
+          <main className="flex-grow">
+            <AdminPanel />
+          </main>
+        </>
       ) : (
         <>
           <Navbar 
@@ -281,7 +355,7 @@ export default function App() {
             onLoginClick={() => setIsLoginOpen(true)} 
             onLogoutClick={handleLogout}
             onProfileClick={() => {setCurrentView("profile"); window.scrollTo(0, 0);}}
-            onHomeClick={() => {setCurrentView("home"); setIsAdmin(false); window.location.search = "";}}
+            onHomeClick={() => {setCurrentView("home"); setIsAdmin(false); window.history.pushState({}, '', '/'); window.location.search = "";}}
             onCartClick={() => setIsCartOpen(true)}
             onAdminClick={handleAdminAccess}
             searchQuery={searchQuery}
