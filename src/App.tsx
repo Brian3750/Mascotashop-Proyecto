@@ -49,7 +49,6 @@ export default function App() {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      // Si hay sesión y es admin, ir directo al panel
       if (session && session.user?.email === ADMIN_EMAIL) {
         setIsAdmin(true);
         setCurrentView('admin');
@@ -59,7 +58,6 @@ export default function App() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      // Cuando se autentica un admin, ir direto al panel
       if (session && session.user.email === ADMIN_EMAIL) {
         setIsAdmin(true);
         setCurrentView('admin');
@@ -105,10 +103,8 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [session]);
 
-  // Sincronizar activeSearch con searchQuery para el filtrado
   useEffect(() => {
     setActiveSearch(searchQuery);
-    // Si hay una búsqueda y no estamos en catálogo, ir al catálogo
     if (searchQuery.trim() && currentView === "home") {
       setCurrentView("catalog");
     }
@@ -128,17 +124,19 @@ export default function App() {
   // --- FUNCIÓN PARA CONFIRMAR PAGO Y REGISTRAR VENTA/STOCK ---
   const confirmarPago = async (token: string) => {
     try {
-      // Recuperamos el carrito guardado en localStorage antes de ir a Transbank
+      // Recuperamos tanto el carrito como el pasaporte del usuario guardado antes del salto
       const pendingCart = JSON.parse(localStorage.getItem('pending_cart') || '[]');
-      
-      console.log("🔍 Validando pago y actualizando inventario...");
+      const savedUserId = localStorage.getItem('id_usuario_checkout');
+
+      console.log("🔍 Validando pago. ID Usuario recuperado:", savedUserId);
       
       const response = await fetch('http://localhost:3000/api/confirmar-pago', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           token,
-          cartItems: pendingCart 
+          cartItems: pendingCart,
+          id_usuario: savedUserId // 👈 ¡AHORA SÍ VIAJA AL VALIDAR EL PAGO EN EL BACKEND!
         })
       });
       
@@ -148,7 +146,7 @@ export default function App() {
         alert("¡Compra realizada con éxito! El inventario ha sido actualizado.");
         setCartItems([]);
         localStorage.removeItem('pending_cart');
-        // Refrescamos los productos para mostrar el nuevo stock
+        localStorage.removeItem('id_usuario_checkout'); // Limpieza de seguridad
         fetchProducts();
       } else {
         alert("El pago fue rechazado o cancelado.");
@@ -157,7 +155,6 @@ export default function App() {
       console.error("❌ Error en confirmación:", error);
       alert("Error de conexión con el servidor.");
     } finally {
-      // Limpiamos la URL y volvemos al inicio
       window.history.replaceState({}, document.title, "/");
       setCurrentView("home");
     }
@@ -175,7 +172,7 @@ export default function App() {
           image: item.imagen_url || '/images/Master-Dog-Adulto-Carne.png', 
           category: (item.categoria || 'perros').toLowerCase(),
           description: item.marca || 'Nutrición Premium',
-          stock: item.stock || 0 // Muestra el stock real de la BD
+          stock: item.stock || 0 
         }));
         setProducts(dbProducts);
       } else {
@@ -206,7 +203,8 @@ export default function App() {
     setIsAdmin(false); 
   };
 
-  const handleCheckout = async () => {
+  // 🛠️ MODIFICADO: Ahora acepta de manera opcional el userId inyectado por el interceptor del CartDrawer
+  const handleCheckout = async (userId?: string) => {
     if (cartItems.length === 0) return;
     if (!session) {
       setIsCartOpen(false); 
@@ -218,13 +216,16 @@ export default function App() {
     try {
       const totalVenta = Math.round(cartItems.reduce((acc, item) => acc + (item.price * item.quantity), 0));
       const buyOrder = `ORD-${Date.now()}`;
+      
+      // Determinamos de manera segura el ID activo
+      const finalUserId = userId || session.user.id;
 
       const response = await fetch('http://localhost:3000/api/crear-pago', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           buyOrder: buyOrder,
-          sessionId: session.user.id, // Enviamos el UUID del usuario
+          sessionId: finalUserId, 
           total: totalVenta
         })
       });
@@ -234,8 +235,10 @@ export default function App() {
       const data = await response.json();
 
       if (data.url && data.token) {
-        // MUY IMPORTANTE: Guardamos el carrito para recuperarlo al volver de Transbank
+        // Aseguramos de manera estricta ambas claves en el Storage local antes de redirigir a Webpay
         localStorage.setItem('pending_cart', JSON.stringify(cartItems));
+        localStorage.setItem('id_usuario_checkout', finalUserId);
+        console.log("🛡️ Contexto de venta respaldado de forma segura localmente.");
         
         const form = document.createElement('form');
         form.method = 'POST';
@@ -312,7 +315,6 @@ export default function App() {
     <div className="min-h-screen bg-white flex flex-col font-sans">
       {isAdmin ? (
         <>
-          {/* Navbar simplificado para Admin */}
           <nav className="sticky top-0 z-50 bg-white border-b border-gray-100 shadow-sm">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="flex justify-between items-center h-16">
@@ -342,7 +344,6 @@ export default function App() {
             </div>
           </nav>
 
-          {/* Panel Admin */}
           <main className="flex-grow">
             <AdminPanel />
           </main>
@@ -438,18 +439,16 @@ export default function App() {
         items={cartItems} 
         onUpdateQuantity={(id, d) => setCartItems(prev => prev.map(i => i.id === id ? {...i, quantity: Math.max(1, i.quantity + d)} : i))} 
         onRemove={(id) => setCartItems(prev => prev.filter(i => i.id !== id))} 
-        onCheckout={handleCheckout}
+        onCheckout={handleCheckout} // Pasa correctamente el método modificado
         isProcessing={isProcessing}
       />
     </div>
   );
 }
 
-// Subcomponente ProductCard modificado con Trazabilidad Dinámica Real
 function ProductCard({ product, onAdd }: { product: any; onAdd: () => void }) {
   const isOutOfStock = product.stock <= 0;
 
-  // Manejador del clic en el cuerpo de la tarjeta (Interacción de visualización)
   const handleCardClick = () => {
     if (!isOutOfStock) {
       console.log(`🎯 Trazando vista del producto: ${product.name}`);
@@ -492,12 +491,8 @@ function ProductCard({ product, onAdd }: { product: any; onAdd: () => void }) {
         <span className="text-xl font-black text-gray-900">{formatCLP(product.price)}</span>
         <button 
           onClick={(e) => {
-            e.stopPropagation(); // Evita ejecutar el onClick del contenedor padre
-            
-            // 1. Ejecuta la función nativa que mete el producto real en el carrito
+            e.stopPropagation(); 
             onAdd(); 
-            
-            // 2. Envía la traza NoSQL en tiempo real a MongoDB Atlas
             console.log(`🛒 Trazando clic en añadir al carrito: ${product.name}`);
             registrarInteraccionMongo("click_añadir_carrito", {
               id: product.id,

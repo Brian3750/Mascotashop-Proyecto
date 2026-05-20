@@ -29,13 +29,14 @@ export default function Navbar({
   setSearchQuery, 
   cartCount 
 }: NavbarProps) {
-  // CORRECCIÓN: Definición correcta del estado para abrir/cerrar el menú móvil
+  // Definición del estado para abrir/cerrar el menú móvil
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   return (
     <nav className="sticky top-0 z-50 bg-white border-b border-gray-100 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16">
+          
           {/* Logo */}
           <button
             onClick={onHomeClick}
@@ -65,10 +66,12 @@ export default function Navbar({
 
           {/* Actions */}
           <div className="flex items-center gap-2 sm:gap-4">
+            
+            {/* Icono de Ajustes: Solo visible para Admins */}
             {isAdmin && (
               <button
                 onClick={onAdminClick}
-                className="p-2 text-gray-300 hover:text-orange-500 transition-colors"
+                className="p-2 text-gray-400 hover:text-orange-500 transition-colors"
                 title="Administración"
               >
                 <Settings className="h-5 w-5" />
@@ -78,16 +81,17 @@ export default function Navbar({
             {/* LÓGICA DINÁMICA DE USUARIO */}
             {userSession ? (
               <>
-                {!isAdmin && (
-                  <button
-                    onClick={onProfileClick}
-                    className="flex items-center gap-2 text-gray-600 hover:text-orange-500 transition-colors"
-                    title="Mi Perfil"
-                  >
-                    <User className="h-6 w-6" />
-                    <span className="hidden sm:block font-medium">Perfil</span>
-                  </button>
-                )}
+                {/* Botón Mi Perfil: Visible para todos los usuarios autenticados (incluido Admin) */}
+                <button
+                  onClick={onProfileClick}
+                  className="flex items-center gap-2 text-gray-600 hover:text-orange-500 transition-colors"
+                  title="Mi Perfil"
+                >
+                  <User className="h-6 w-6" />
+                  <span className="hidden sm:block font-medium">Perfil</span>
+                </button>
+
+                {/* Botón Salir */}
                 <button
                   onClick={onLogoutClick}
                   className="flex items-center gap-2 text-gray-600 hover:text-red-500 transition-colors"
@@ -97,6 +101,7 @@ export default function Navbar({
                 </button>
               </>
             ) : (
+              /* Botón Ingresar cuando no hay sesión activa */
               <button
                 onClick={onLoginClick}
                 className="flex items-center gap-2 text-gray-600 hover:text-orange-500 transition-colors"
@@ -106,6 +111,7 @@ export default function Navbar({
               </button>
             )}
 
+            {/* Carrito de Compras */}
             <button 
               onClick={onCartClick}
               className="relative p-2 text-gray-600 hover:text-orange-500 transition-colors"
@@ -118,6 +124,7 @@ export default function Navbar({
               )}
             </button>
 
+            {/* Botón de Menú Hamburguesa Móvil */}
             <button
               className="md:hidden p-2 text-gray-600"
               onClick={() => setIsMenuOpen(!isMenuOpen)}
@@ -144,14 +151,15 @@ export default function Navbar({
           <div className="flex flex-col gap-2">
             {userSession && (
               <>
-                {!isAdmin && (
-                  <button 
-                    onClick={() => { onProfileClick(); setIsMenuOpen(false); }}
-                    className="flex items-center justify-center gap-2 p-3 bg-orange-50 text-orange-600 rounded-xl font-medium"
-                  >
-                    <User className="h-5 w-5" /> Mi Perfil
-                  </button>
-                )}
+                {/* Perfil en menú móvil */}
+                <button 
+                  onClick={() => { onProfileClick(); setIsMenuOpen(false); }}
+                  className="flex items-center justify-center gap-2 p-3 bg-orange-50 text-orange-600 rounded-xl font-medium"
+                >
+                  <User className="h-5 w-5" /> Mi Perfil
+                </button>
+                
+                {/* Cerrar sesión en menú móvil */}
                 <button 
                   onClick={() => { onLogoutClick(); setIsMenuOpen(false); }}
                   className="flex items-center justify-center gap-2 p-3 bg-red-50 text-red-600 rounded-xl font-medium"
@@ -163,9 +171,9 @@ export default function Navbar({
             {isAdmin && (
               <button 
                 onClick={() => { onAdminClick(); setIsMenuOpen(false); }}
-                className="p-4 bg-orange-50 text-orange-600 rounded-xl text-center font-medium"
+                className="p-3 bg-slate-100 text-slate-700 rounded-xl text-center font-medium border border-slate-200"
               >
-                Panel de Gestión
+                Panel de Gestión Admin
               </button>
             )}
           </div>

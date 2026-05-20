@@ -1,7 +1,9 @@
+import React from 'react';
 import { motion, AnimatePresence } from "motion/react";
-import { X, ShoppingBag, Trash2, Plus, Minus, Loader2 } from "lucide-react"; // Importamos Loader2
+import { X, ShoppingBag, Trash2, Plus, Minus, Loader2 } from "lucide-react"; 
 import { formatCLP } from "../lib/utils";
 import { Product } from "../data/products";
+import { supabase } from "../lib/supabaseClient"; 
 
 export interface CartItem extends Product {
   quantity: number;
@@ -13,8 +15,8 @@ interface CartDrawerProps {
   items: CartItem[];
   onUpdateQuantity: (id: string, delta: number) => void;
   onRemove: (id: string) => void;
-  onCheckout: () => Promise<void>; // NUEVA PROP
-  isProcessing: boolean;           // NUEVA PROP
+  onCheckout: (userId?: string) => Promise<void>; // 👈 MODIFICADO: Permite recibir opcionalmente el userId
+  isProcessing: boolean;           
 }
 
 export default function CartDrawer({
@@ -23,10 +25,34 @@ export default function CartDrawer({
   items,
   onUpdateQuantity,
   onRemove,
-  onCheckout, // RECIBIMOS LA FUNCIÓN
-  isProcessing, // RECIBIMOS EL ESTADO DE CARGA
+  onCheckout, 
+  isProcessing, 
 }: CartDrawerProps) {
   const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+
+  // =========================================================================
+  // 🔥 INTERCEPTOR TRANSACCIONAL: ASEGURA EL ID DE USUARIO PARA LOS PUNTOS
+  // =========================================================================
+  const handleInterceptedCheckout = async () => {
+    let currentUserId: string | undefined = undefined;
+
+    try {
+      // Capturamos el estado de sesión actual en memoria antes de abandonar el sitio
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        currentUserId = user.id;
+        // Respaldo de seguridad en almacenamiento local
+        localStorage.setItem('id_usuario_checkout', user.id);
+        console.log("🛡️ ID de usuario asegurado para Webpay:", user.id);
+      }
+    } catch (error) {
+      console.warn("⚠️ No se pudo pre-guardar el ID de usuario:", error);
+    } finally {
+      // Ejecutamos el checkout inyectándole el ID del cliente logueado
+      await onCheckout(currentUserId);
+    }
+  };
+  // =========================================================================
 
   return (
     <AnimatePresence>
@@ -140,7 +166,7 @@ export default function CartDrawer({
               )}
             </div>
 
-            {/* Footer con BOTÓN CONECTADO */}
+            {/* Footer */}
             {items.length > 0 && (
               <div className="p-6 border-t border-gray-100 bg-gray-50 space-y-4">
                 <div className="flex justify-between items-center">
@@ -151,7 +177,7 @@ export default function CartDrawer({
                   Transacción procesada vía Supabase
                 </p>
                 <button 
-                  onClick={onCheckout}
+                  onClick={handleInterceptedCheckout} 
                   disabled={isProcessing}
                   className="w-full py-4 bg-orange-500 text-white font-bold rounded-2xl hover:bg-orange-600 shadow-lg shadow-orange-200 transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >

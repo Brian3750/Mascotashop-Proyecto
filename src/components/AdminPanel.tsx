@@ -166,6 +166,21 @@ export default function AdminPanel() {
     }
   };
 
+  // --- NUEVA FUNCIÓN DEL MOTOR ANALÍTICO RFM ---
+  const correrMotorRFM = async () => {
+    try {
+      const { error } = await supabase.rpc('calcular_segmentacion_rfm');
+      
+      if (error) throw error;
+      
+      alert('¡Segmentación RFM actualizada con éxito en tiempo real!');
+      fetchData(); // Recarga los datos para pintar las nuevas categorías
+    } catch (error) {
+      console.error('Error al correr el motor analítico:', error);
+      alert('No se pudo procesar la segmentación.');
+    }
+  };
+
   if (loading) return <div className="p-10 text-center font-sans">Cargando datos de sucursal Maipú...</div>;
 
   return (
@@ -216,12 +231,25 @@ export default function AdminPanel() {
           
           {/* VISTA DE ANALÍTICA */}
           {activeTab === 'analytics' && (
-            <div className="animate-in fade-in duration-500">
+            <div className="animate-in fade-in duration-500 space-y-6">
+              <div className="flex justify-between items-center rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div>
+                  <h3 className="font-bold text-slate-900">Motor de Segmentación</h3>
+                  <p className="text-xs text-slate-500">Recalcula el estado RFM de los clientes basándose en sus compras completadas.</p>
+                </div>
+                <button
+                  onClick={correrMotorRFM}
+                  className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white transition hover:bg-slate-800 shadow-md"
+                >
+                  <BarChart3 size={14} /> Ejecutar Motor RFM
+                </button>
+              </div>
+              
               <AnalyticsDashboard />
             </div>
           )}
 
-          {/* VISTA DE PEDIDOS ACTUALIZADA CON PUNTOS */}
+          {/* VISTA DE PEDIDOS ACTUALIZADA WITH PUNTOS */}
           {activeTab === 'pedidos' && (
             <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
               <div className="mb-6 flex items-center justify-between">

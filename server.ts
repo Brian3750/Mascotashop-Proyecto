@@ -1,4 +1,8 @@
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" }); 
+
 import express from "express";
+import { getSupabaseServer } from './src/lib/supabaseServer'; 
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -11,27 +15,26 @@ const { WebpayPlus, Options, IntegrationCommerceCodes, IntegrationApiKeys, Envir
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// --- CORRECCIÓN: Apuntar al clúster en la nube de tu compañero en lugar de Localhost ---
+// --- CONFIGURACIÓN DEL CLÚSTER EN LA NUBE ---
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://admin_loyaldata:UINrVDBJFVG8hheJ@clusterloyaldataanalyti.hwpmyyl.mongodb.net/LoyalDataAnalytics?appName=ClusterLoyalDataAnalytics";
 
 async function conectarMongoDB() {
   const client = new MongoClient(MONGODB_URI);
   await client.connect();
-  // Retornamos explícitamente la base de datos analítica del proyecto
   return client.db("LoyalDataAnalytics");
 }
 
-// --- CONFIGURACIÓN DE SUPABASE CON SERVICE_ROLE ---
+// --- CONFIGURACIÓN DE SUPABASE ---
 const supabaseUrl = 'https://klicotyrfitmpltrqewh.supabase.co'; 
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtsaWNvdHlyZml0bXBsdHJxZXdoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTt7NTA4NDEyMCwiZXhwIjoyMDkwNjYwMTIwfQ.KUoy-udkq2cKN_zfBUJtASOgMYJ9zJBq4CXxP-cektg'; 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Variable global para mantener la instancia de la base de datos No Relacional
 let mongoDb: any;
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
+  app.use(express.urlencoded({ extended: true }));
   app.use(express.json());
 
   const tx = new WebpayPlus.Transaction(
@@ -49,14 +52,13 @@ async function startServer() {
     try {
       const { id_usuario, evento, data_producto } = req.body;
 
-      // El profesor exige trazabilidad vinculada; bloqueamos logs anónimos
       if (!id_usuario) {
         return res.status(400).json({ error: "No se puede registrar una interacción anónima. Se requiere id_usuario." });
       }
 
       const nuevoLog = {
-        id_usuario: id_usuario, // UUID que viene de Supabase Auth
-        evento: evento || "interaccion_producto", // Ej: 'visualizacion_producto'
+        id_usuario: id_usuario, 
+        evento: evento || "interaccion_producto", 
         detalles: {
           id_producto: data_producto?.id_producto || data_producto?.id || null,
           nombre: data_producto?.nombre || "Producto desconocido",
@@ -71,11 +73,10 @@ async function startServer() {
         try {
           mongoDb = await conectarMongoDB();
         } catch (reconnectError) {
-          return res.status(500).json({ error: "Persistencia analítica no disponible temporalmente en Atlas." });
+          return res.status(500).json({ error: "Persistencia analítica no disponible temporalmente in Atlas." });
         }
       }
 
-      // Guardamos directamente en la colección especificada en el DER
       const resultado = await mongoDb.collection("Logs_Comportamiento_RFM").insertOne(nuevoLog);
       
       console.log(`📥 [MongoDB Atlas] Log guardado con éxito. ID de inserción: ${resultado.insertedId}`);
@@ -100,8 +101,22 @@ async function startServer() {
     }
   });
 
+  // =========================================================================
+  // 🧾 RETURN URL DE TRANSBANK - RECIBE token_ws POR POST
+  // =========================================================================
+  app.post('/', (req, res) => {
+    const token_ws = req.body?.token_ws;
+    if (!token_ws) {
+      return res.status(400).send('Token no recibido en la URL de retorno de Transbank');
+    }
+
+    console.log('🔁 Redirect desde Transbank con token_ws:', token_ws);
+    return res.redirect(`/payment-confirmation?token_ws=${encodeURIComponent(token_ws)}`);
+  });
+
   app.post('/api/confirmar-pago', async (req, res) => {
-    const { token, cartItems } = req.body;
+    const { cartItems, id_usuario } = req.body;
+    const token = req.body.token || req.body.token_ws;
     if (!token) return res.status(400).json({ error: "Token no recibido" });
 
     try {
@@ -111,34 +126,37 @@ async function startServer() {
       if (commitResponse.response_code === 0) {
         console.log("2. ✅ Pago aprobado. Registrando en Supabase...");
 
-        // A. Insertar Venta
-        const { data: ventaData, error: errorVenta } = await supabase
+        const idClienteFinal = id_usuario || commitResponse.session_id;
+        const supabaseServerInstance = getSupabaseServer();
+
+        // A. Insertar Venta usando la instancia segura creada
+        const { data: ventaData, error: errorVenta } = await supabaseServerInstance
           .from('ventas')
           .insert([{
             total_venta: commitResponse.amount,
-            id_cliente: commitResponse.session_id, 
+            id_cliente: idClienteFinal,
             estado: 'completado'
           }])
           .select();
 
         if (errorVenta) {
-          console.error("❌ ERROR TABLA VENTAS:", errorVenta.message);
+          console.error("❌ ERROR TABLA VENTAS:", errorVenta.message, errorVenta);
           throw errorVenta;
         }
 
         const nuevaVenta = ventaData[0];
         console.log(`3. ✨ Venta ${nuevaVenta.id_venta} creada.`);
 
-        // B. Insertar Detalles e Actualizar Stock
+        // B. Insertar Detalles e Actualizar Stock usando la instancia segura
         if (cartItems && cartItems.length > 0) {
           const detalles = cartItems.map((item: any) => ({
             id_venta: nuevaVenta.id_venta,
-            id_alimento: item.id, 
+            id_alimento: item.id,
             cantidad: item.quantity,
             precio_unitario: item.price
           }));
 
-          const { error: errorDetalle } = await supabase
+          const { error: errorDetalle } = await supabaseServerInstance
             .from('detalle_ventas')
             .insert(detalles);
 
@@ -150,10 +168,10 @@ async function startServer() {
             // C. DESCUENTO AUTOMÁTICO DE STOCK
             console.log("5. 📉 Actualizando inventario...");
             for (const item of cartItems) {
-              const { error: errorStock } = await supabase
-                .rpc('discount_stock', { 
-                  row_id: item.id, 
-                  quantity_to_subtract: item.quantity 
+              const { error: errorStock } = await supabaseServerInstance
+                .rpc('discount_stock', {
+                  row_id: item.id,
+                  quantity_to_subtract: item.quantity
                 });
 
               if (errorStock) {
@@ -162,6 +180,38 @@ async function startServer() {
             }
             console.log("✅ Proceso de stock finalizado.");
           }
+        }
+
+        // D. GUARDAR PUNTOS DE FIDELIZACIÓN
+        if (id_usuario) {
+          console.log("6. 🎁 Calculando y guardando puntos de fidelización...");
+          const puntosGanados = Math.floor(commitResponse.amount * 0.01); // 1% del total
+
+          // Obtener puntos actuales del usuario
+          const { data: perfil, error: errorPerfil } = await supabaseServerInstance
+            .from('perfiles')
+            .select('puntos_acumulados')
+            .eq('id', id_usuario)
+            .single();
+
+          if (errorPerfil) {
+            console.warn(`⚠️ No se encontró perfil para usuario ${id_usuario}:`, errorPerfil.message);
+          } else {
+            const nuevosPuntos = (perfil?.puntos_acumulados || 0) + puntosGanados;
+
+            const { error: errorPuntos } = await supabaseServerInstance
+              .from('perfiles')
+              .update({ puntos_acumulados: nuevosPuntos })
+              .eq('id', id_usuario);
+
+            if (errorPuntos) {
+              console.error(`❌ Error al guardar puntos para usuario ${id_usuario}:`, errorPuntos.message);
+            } else {
+              console.log(`✅ Puntos guardados: +${puntosGanados} puntos. Total: ${nuevosPuntos} puntos`);
+            }
+          }
+        } else {
+          console.warn("⚠️ No se recibió id_usuario. Los puntos no se guardarán.");
         }
       } else {
         console.warn("⚠️ Pago rechazado por Transbank:", commitResponse.response_code);
@@ -175,12 +225,13 @@ async function startServer() {
     }
   });
 
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
     app.use(vite.middlewares);
   }
 
-  // --- MEJORA CRÍTICA: Conectar a MongoDB Atlas ANTES de abrir el puerto de escucha ---
+  // --- CONEXIÓN PREVIA A MONGODB ATLAS ---
   try {
     console.log("⏳ Conectando al clúster analítico de MongoDB Atlas...");
     mongoDb = await conectarMongoDB();
@@ -194,4 +245,16 @@ async function startServer() {
   });
 }
 
-startServer();
+// Manejo central de errores no capturados para debugging local
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err && err.stack ? err.stack : err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ Unhandled Rejection:', reason);
+});
+
+startServer().catch((err) => {
+  console.error('❌ Error al iniciar el servidor:', err && err.stack ? err.stack : err);
+  process.exit(1);
+});

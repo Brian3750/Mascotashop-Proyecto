@@ -20,7 +20,7 @@ export default function WhatsAppButton() {
         const { data: mascotas } = await supabase
           .from('mascotas')
           .select('nombre')
-          .eq('id_cliente', session.user.id)
+          .eq('id_usuario', session.user.id)
           .limit(1);
 
         setDatosCRM({
