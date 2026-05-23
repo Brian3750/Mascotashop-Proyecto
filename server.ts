@@ -114,6 +114,9 @@ async function startServer() {
     return res.redirect(`/payment-confirmation?token_ws=${encodeURIComponent(token_ws)}`);
   });
 
+  // =========================================================================
+  // 🧾 ENDPOINT DE CONFIRMACIÓN DE PAGO - TRANSBANK & SUPABASE CRM
+  // =========================================================================
   app.post('/api/confirmar-pago', async (req, res) => {
     const { cartItems, id_usuario } = req.body;
     const token = req.body.token || req.body.token_ws;
@@ -182,7 +185,7 @@ async function startServer() {
           }
         }
 
-        // D. GUARDAR PUNTOS DE FIDELIZACIÓN
+        // D. GUARDAR PUNTOS DE FIDELIZACIÓN & EJECUTAR MOTOR RFM
         if (id_usuario) {
           console.log("6. 🎁 Calculando y guardando puntos de fidelización...");
           const puntosGanados = Math.floor(commitResponse.amount * 0.01); // 1% del total
@@ -210,8 +213,24 @@ async function startServer() {
               console.log(`✅ Puntos guardados: +${puntosGanados} puntos. Total: ${nuevosPuntos} puntos`);
             }
           }
+
+          // =========================================================
+          // 📊 INVOCACIÓN DEL MOTOR ANALÍTICO RFM DE SUPABASE
+          // =========================================================
+          console.log("7. 📊 Ejecutando motor analítico RFM...");
+          
+          const { error: rfmError } = await supabaseServerInstance
+            .rpc('actualizar_segmentacion_rfm');
+
+          if (rfmError) {
+            console.error("⚠️ Error al recalcular la segmentación RFM:", rfmError.message);
+          } else {
+            console.log("✅ Segmentación RFM y Categorías recalculadas en tiempo real para la base de datos.");
+          }
+          // =========================================================
+
         } else {
-          console.warn("⚠️ No se recibió id_usuario. Los puntos no se guardarán.");
+          console.warn("⚠️ No se recibió id_usuario. Los puntos ni el análisis RFM se guardarán.");
         }
       } else {
         console.warn("⚠️ Pago rechazado por Transbank:", commitResponse.response_code);
