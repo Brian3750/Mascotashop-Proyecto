@@ -155,7 +155,7 @@ async function startServer() {
           const detalles = cartItems.map((item: any) => ({
             id_venta: nuevaVenta.id_venta,
             id_alimento: item.id,
-            cantidad: item.quantity,
+            cantidad: item.quantity, 
             precio_unitario: item.price
           }));
 
@@ -244,6 +244,74 @@ async function startServer() {
     }
   });
 
+  // =========================================================================
+  // 📊 ENDPOINT ANALÍTICO - ENTRADA DE KPIs INTEGRADOS (EVITA RLS)
+  // =========================================================================
+  app.get('/api/analitica/dashboard', async (req, res) => {
+    try {
+      const supabaseServerInstance = getSupabaseServer();
+
+      // 1. Obtener ingresos totales históricos basados en las ventas completadas
+      const { data: todasLasVentas, error: errVentas } = await supabaseServerInstance
+        .from('ventas')
+        .select('total_venta')
+        .eq('estado', 'completado');
+
+      if (errVentas) throw errVentas;
+      const totalIngresos = todasLasVentas?.reduce((sum, v) => sum + Number(v.total_venta), 0) || 0;
+
+      // 2. Traer perfiles completos de la DB para evadir el bloqueo de RLS en el front
+      const { data: todosLosPerfiles, error: errPerfiles } = await supabaseServerInstance
+        .from('perfiles')
+        .select('puntos_acumulados, segmento_rfm');
+
+      if (errPerfiles) throw errPerfiles;
+
+      const totalClientes = todosLosPerfiles?.length || 0;
+      const totalPuntos = todosLosPerfiles?.reduce((sum, p) => sum + (p.puntos_acumulados || 0), 0) || 0;
+
+      // 3. Agrupar y mapear dinámicamente la distribución RFM calculada por el motor SQL
+      const conteoRFM: Record<string, number> = { 'Campeones': 0, 'Leales': 0, 'En Riesgo': 0, 'Perdidos': 0 };
+      todosLosPerfiles?.forEach(p => {
+        const seg = p.segmento_rfm || 'Perdidos';
+        if (conteoRFM[seg] !== undefined) {
+          conteoRFM[seg]++;
+        } else {
+          // Si el motor calcula categorías alternativas de prueba (como VIP, etc.), mapear a Campeones por defecto
+          conteoRFM['Campeones']++;
+        }
+      });
+
+      const totalConSegmento = todosLosPerfiles?.length || 1;
+      const distribucionRFMReal = Object.keys(conteoRFM).map(name => ({
+        name,
+        value: Math.round((conteoRFM[name] / totalConSegmento) * 100),
+        color: name === 'Campeones' ? '#10b981' : name === 'Leales' ? '#3b82f6' : name === 'En Riesgo' ? '#f97316' : '#ef4444'
+      }));
+
+      // 4. Traer el historial transaccional de auditoría reciente usando 'fecha_venta'
+      const { data: transaccionesRecientes, error: errHistorial } = await supabaseServerInstance
+        .from('ventas')
+        .select('id_venta, id_cliente, total_venta, fecha_venta')
+        .order('fecha_venta', { ascending: false })
+        .limit(10);
+
+      if (errHistorial) throw errHistorial;
+
+      return res.json({
+        success: true,
+        totalIngresos,
+        totalClientes,
+        totalPuntos,
+        distribuciónRFM: distribucionRFMReal,
+        transaccionesRecientes: transaccionesRecientes || []
+      });
+
+    } catch (error: any) {
+      console.error("❌ Error al obtener métricas consolidadas del CRM:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
