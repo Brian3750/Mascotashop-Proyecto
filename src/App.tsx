@@ -5,6 +5,7 @@ import LoginModal from "./components/LoginModal";
 import CartDrawer, { CartItem } from "./components/CartDrawer";
 import RegistroMascota from './components/RegistroMascota'; 
 import UserProfile from './components/PerfilUsuario';
+import TicketPago from "./components/TicketPago"; 
 import WhatsAppButton from './components/WhatsAppButton'; 
 import AdminPanel from './components/AdminPanel'; 
 import { PRODUCTS as LOCAL_PRODUCTS, Product } from "./data/products"; 
@@ -42,8 +43,22 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [session, setSession] = useState<any>(null);
 
+  // 📄 ESTADO DEL TICKET CON TU TIPADO ESTRICTO DE TYPESCRIPT
+  const datosTicketInicialState = null;
+  const [datosTicket, setDatosTicket] = useState<{
+    buyOrder: string;
+    fechaHora: string;
+    cliente: string;
+    monto: number;
+  } | null>(datosTicketInicialState);
+
+  const [pagoValidadoExitoso, setPagoValidadoExitoso] = useState(false);
+
   const paymentProcessed = useRef(false);
 
+  // =========================================================================
+  // 🔄 1. EFECTO DE AUTENTICACIÓN E INICIALIZACIÓN DE PRODUCTOS
+  // =========================================================================
   useEffect(() => {
     fetchProducts();
 
@@ -64,14 +79,36 @@ export default function App() {
         window.history.pushState({}, '', '/admin');
       } else {
         setIsAdmin(false);
-        setCurrentView('home');
-        if (window.location.pathname === '/admin') {
-          window.history.pushState({}, '', '/');
+        // CORRECCIÓN: Si venimos con parámetros de Transbank, evitamos que pise el renderizado a 'home'
+        const params = new URLSearchParams(window.location.search);
+        if (!params.get('token_ws')) {
+          setCurrentView('home');
+          if (window.location.pathname === '/admin') {
+            window.history.pushState({}, '', '/');
+          }
         }
       }
     });
 
     return () => subscription.unsubscribe();
+  }, []);
+
+  // =========================================================================
+  // 🛡️ 2. INTERCEPTOR INTEGRADO PARA DETECTAR RETORNO DE TRANSBANK
+  // =========================================================================
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tokenWs = params.get('token_ws');
+
+    if (tokenWs) {
+      // Congelamos la vista inmediatamente para evitar parpadeos antes de resolver la promesa
+      setCurrentView("confirmacion");
+      
+      if (!paymentProcessed.current) {
+        paymentProcessed.current = true; 
+        confirmarPago(tokenWs);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -110,25 +147,16 @@ export default function App() {
     }
   }, [searchQuery, currentView]);
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const tokenWs = params.get('token_ws');
-
-    if (tokenWs && !paymentProcessed.current) {
-      paymentProcessed.current = true; 
-      setCurrentView("confirmacion");
-      confirmarPago(tokenWs);
-    }
-  }, []);
-
-  // --- FUNCIÓN PARA CONFIRMAR PAGO Y REGISTRAR VENTA/STOCK ---
+  // =========================================================================
+  // 🧾 3. FUNCIÓN DE VALIDACIÓN CON ASEGURAMIENTO DE LIMPIEZA POST-PAGO
+  // =========================================================================
   const confirmarPago = async (token: string) => {
+    let pagoAprobado = false;
     try {
-      // Recuperamos tanto el carrito como el pasaporte del usuario guardado antes del salto
       const pendingCart = JSON.parse(localStorage.getItem('pending_cart') || '[]');
       const savedUserId = localStorage.getItem('id_usuario_checkout');
 
-      console.log("🔍 Validando pago. ID Usuario recuperado:", savedUserId);
+      console.log("🔍 Validando token con Transbank...", token);
       
       const response = await fetch('http://localhost:3000/api/confirmar-pago', {
         method: 'POST',
@@ -136,17 +164,29 @@ export default function App() {
         body: JSON.stringify({ 
           token,
           cartItems: pendingCart,
-          id_usuario: savedUserId // 👈 ¡AHORA SÍ VIAJA AL VALIDAR EL PAGO EN EL BACKEND!
+          id_usuario: savedUserId 
         })
       });
       
       const result = await response.json();
 
-      if (result.success) {
-        alert("¡Compra realizada con éxito! El inventario ha sido actualizado.");
+      if (result.success && result.data) {
+        pagoAprobado = true;
+
+        // Estructura limpia leyendo lo devuelto por tu servidor Express
+        setDatosTicket({
+          buyOrder: result.data.buyOrder || result.data.buy_order || 'N/A',
+          fechaHora: result.data.fechaHora || new Date().toLocaleString(),
+          cliente: result.data.cliente || 'Cliente MascotaShop',
+          monto: Number(result.data.monto || result.data.amount || 0)
+        });
+
+        // Limpieza de estados y storage de venta procesada con éxito
         setCartItems([]);
         localStorage.removeItem('pending_cart');
-        localStorage.removeItem('id_usuario_checkout'); // Limpieza de seguridad
+        localStorage.removeItem('id_usuario_checkout');
+        
+        setPagoValidadoExitoso(true);
         fetchProducts();
       } else {
         alert("El pago fue rechazado o cancelado.");
@@ -155,8 +195,12 @@ export default function App() {
       console.error("❌ Error en confirmación:", error);
       alert("Error de conexión con el servidor.");
     } finally {
-      window.history.replaceState({}, document.title, "/");
-      setCurrentView("home");
+      // Si la transacción falló o no se pudo validar, te devuelve al home limpiando la URL
+      if (!pagoAprobado) {
+        window.history.replaceState({}, document.title, "/");
+        paymentProcessed.current = false;
+        setCurrentView("home");
+      }
     }
   };
 
@@ -203,7 +247,6 @@ export default function App() {
     setIsAdmin(false); 
   };
 
-  // 🛠️ MODIFICADO: Ahora acepta de manera opcional el userId inyectado por el interceptor del CartDrawer
   const handleCheckout = async (userId?: string) => {
     if (cartItems.length === 0) return;
     if (!session) {
@@ -216,8 +259,6 @@ export default function App() {
     try {
       const totalVenta = Math.round(cartItems.reduce((acc, item) => acc + (item.price * item.quantity), 0));
       const buyOrder = `ORD-${Date.now()}`;
-      
-      // Determinamos de manera segura el ID activo
       const finalUserId = userId || session.user.id;
 
       const response = await fetch('http://localhost:3000/api/crear-pago', {
@@ -235,7 +276,6 @@ export default function App() {
       const data = await response.json();
 
       if (data.url && data.token) {
-        // Aseguramos de manera estricta ambas claves en el Storage local antes de redirigir a Webpay
         localStorage.setItem('pending_cart', JSON.stringify(cartItems));
         localStorage.setItem('id_usuario_checkout', finalUserId);
         console.log("🛡️ Contexto de venta respaldado de forma segura localmente.");
@@ -318,10 +358,7 @@ export default function App() {
           <nav className="sticky top-0 z-50 bg-white border-b border-gray-100 shadow-sm">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="flex justify-between items-center h-16">
-                <button
-                  onClick={() => {}}
-                  className="flex items-center gap-2 hover:opacity-80 transition-opacity"
-                >
+                <button onClick={() => {}} className="flex items-center gap-2 hover:opacity-80 transition-opacity">
                   <div className="w-10 h-10 bg-orange-500 rounded-full flex items-center justify-center">
                     <span className="text-white font-bold text-xl">M</span>
                   </div>
@@ -329,7 +366,6 @@ export default function App() {
                     Mascota<span className="text-orange-500">Shop</span>
                   </span>
                 </button>
-
                 <div className="flex items-center gap-4">
                   <span className="text-sm font-semibold text-orange-500">Panel Administrativo</span>
                   <button
@@ -343,7 +379,6 @@ export default function App() {
               </div>
             </div>
           </nav>
-
           <main className="flex-grow">
             <AdminPanel />
           </main>
@@ -367,10 +402,28 @@ export default function App() {
           <main className="flex-grow">
             {currentView === "home" ? renderHome() : 
              currentView === "confirmacion" ? (
-               <div className="py-20 text-center">
-                 <div className="animate-spin h-10 w-10 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
-                 <h2 className="text-2xl font-bold mb-4">Procesando tu pago...</h2>
-                 <p className="text-gray-500">Estamos validando la transacción y actualizando el stock.</p>
+               <div className="py-20 max-w-md mx-auto px-4 flex flex-col items-center justify-center text-center">
+                 {!pagoValidadoExitoso ? (
+                   <>
+                     <div className="animate-spin h-10 w-10 border-4 border-orange-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+                     <h2 className="text-2xl font-bold mb-4">Procesando tu pago...</h2>
+                     <p className="text-gray-500">Estamos validando la transacción y actualizando el stock.</p>
+                   </>
+                 ) : (
+                   /* 🧾 Pasamos los datos del ticket validados y limpios */
+                   datosTicket && (
+                     <TicketPago 
+                       datos={datosTicket} 
+                       onVolver={() => {
+                         setPagoValidadoExitoso(false);
+                         setDatosTicket(null);
+                         paymentProcessed.current = false;
+                         window.history.replaceState({}, document.title, "/");
+                         setCurrentView("home");
+                       }} 
+                     />
+                   )
+                 )}
                </div>
              ) : currentView === "profile" ? (
                <div className="bg-gray-50 min-h-screen pt-8">
@@ -439,7 +492,7 @@ export default function App() {
         items={cartItems} 
         onUpdateQuantity={(id, d) => setCartItems(prev => prev.map(i => i.id === id ? {...i, quantity: Math.max(1, i.quantity + d)} : i))} 
         onRemove={(id) => setCartItems(prev => prev.filter(i => i.id !== id))} 
-        onCheckout={handleCheckout} // Pasa correctamente el método modificado
+        onCheckout={handleCheckout} 
         isProcessing={isProcessing}
       />
     </div>

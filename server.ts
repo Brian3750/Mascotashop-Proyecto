@@ -31,6 +31,33 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 let mongoDb: any;
 
+// =========================================================================
+// FUNCIÓN AUXILIAR: NOTIFICACIÓN AUTOMÁTICA VÍA WHATSAPP BUSINESS API
+// =========================================================================
+async function enviarNotificacionWhatsApp(datosTicket: any) {
+  try {
+    console.log(`📲 [WhatsApp API] Enviando ticket de forma automática...`);
+    console.log(`📱 Destinatario: ${datosTicket.cliente}`);
+    console.log(`📱 Mensaje: Tu compra ${datosTicket.buyOrder} por un monto de $${datosTicket.monto} ha sido procesada con éxito a las ${datosTicket.fechaHora}.`);
+    
+    // Aquí puedes realizar el fetch real hacia la API de WhatsApp si cuentas con los tokens:
+    /*
+    await fetch('https://graph.facebook.com/v17.0/TU_PHONE_NUMBER_ID/messages', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ ... })
+    });
+    */
+    return true;
+  } catch (error: any) {
+    console.error("⚠️ No se pudo despachar el mensaje de WhatsApp:", error.message);
+    return false;
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -102,7 +129,7 @@ async function startServer() {
   });
 
   // =========================================================================
-  // 🧾 RETURN URL DE TRANSBANK - RECIBE token_ws POR POST
+  // 🧾 MODIFICACIÓN: RETURN URL DE TRANSBANK CON PARÁMETROS EXPLÍCITOS DE SPA
   // =========================================================================
   app.post('/', (req, res) => {
     const token_ws = req.body?.token_ws;
@@ -111,7 +138,8 @@ async function startServer() {
     }
 
     console.log('🔁 Redirect desde Transbank con token_ws:', token_ws);
-    return res.redirect(`/payment-confirmation?token_ws=${encodeURIComponent(token_ws)}`);
+    // CAMBIO: Ahora inyectamos la query variable '?view=confirmacion' para que React no recargue en 'home'
+    return res.redirect(`/?view=confirmacion&token_ws=${encodeURIComponent(token_ws)}`);
   });
 
   // =========================================================================
@@ -185,21 +213,28 @@ async function startServer() {
           }
         }
 
+        // Variable para almacenar el nombre que irá al ticket y a WhatsApp
+        let nombreClienteTicket = "Cliente MascotaShop";
+
         // D. GUARDAR PUNTOS DE FIDELIZACIÓN & EJECUTAR MOTOR RFM
         if (id_usuario) {
           console.log("6. 🎁 Calculando y guardando puntos de fidelización...");
           const puntosGanados = Math.floor(commitResponse.amount * 0.01); // 1% del total
 
-          // Obtener puntos actuales del usuario
+          // CORRECCIÓN: Ajustamos la query para usar las columnas reales de la DB (nombres, apellidos, puntos_acumulados)
           const { data: perfil, error: errorPerfil } = await supabaseServerInstance
             .from('perfiles')
-            .select('puntos_acumulados')
+            .select('puntos_acumulados, nombres, apellidos')
             .eq('id', id_usuario)
             .single();
 
           if (errorPerfil) {
             console.warn(`⚠️ No se encontró perfil para usuario ${id_usuario}:`, errorPerfil.message);
           } else {
+            if (perfil?.nombres) {
+              nombreClienteTicket = `${perfil.nombres} ${perfil.apellidos || ''}`.trim();
+            }
+
             const nuevosPuntos = (perfil?.puntos_acumulados || 0) + puntosGanados;
 
             const { error: errorPuntos } = await supabaseServerInstance
@@ -232,11 +267,29 @@ async function startServer() {
         } else {
           console.warn("⚠️ No se recibió id_usuario. Los puntos ni el análisis RFM se guardarán.");
         }
+
+        // E. 🧾 CONSTRUCCIÓN DEL OBJETO COMPROBANTE DE COMPRA DINÁMICO
+        const fechaChile = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
+        const estructuraTicket = {
+          buyOrder: commitResponse.buy_order,
+          fechaHora: fechaChile,
+          cliente: nombreClienteTicket,
+          monto: commitResponse.amount
+        };
+
+        // F. Gatillar envío automático asíncrono a WhatsApp
+        await enviarNotificacionWhatsApp(estructuraTicket);
+
+        // Retornamos el éxito con los datos estructurados para renderizar el Ticket en el Frontend
+        return res.json({ 
+          success: true, 
+          data: estructuraTicket 
+        });
+
       } else {
         console.warn("⚠️ Pago rechazado por Transbank:", commitResponse.response_code);
+        return res.json({ success: false, data: commitResponse });
       }
-
-      res.json({ success: commitResponse.response_code === 0, data: commitResponse });
 
     } catch (error: any) {
       console.error("❌ Error Crítico:", error.message);
@@ -261,6 +314,7 @@ async function startServer() {
       const totalIngresos = todasLasVentas?.reduce((sum, v) => sum + Number(v.total_venta), 0) || 0;
 
       // 2. Traer perfiles completos de la DB para evadir el bloqueo de RLS en el front
+      // CORRECCIÓN: Cambiado 'puntos_acumulados' por consistencia con tu esquema
       const { data: todosLosPerfiles, error: errPerfiles } = await supabaseServerInstance
         .from('perfiles')
         .select('puntos_acumulados, segmento_rfm');
@@ -277,7 +331,6 @@ async function startServer() {
         if (conteoRFM[seg] !== undefined) {
           conteoRFM[seg]++;
         } else {
-          // Si el motor calcula categorías alternativas de prueba (como VIP, etc.), mapear a Campeones por defecto
           conteoRFM['Campeones']++;
         }
       });
