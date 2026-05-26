@@ -1,6 +1,6 @@
 import React from 'react';
-import { CheckCircle, ShoppingBag, ArrowLeft } from 'lucide-react';
-import { formatCLP } from '../lib/utils'; // O tu función de formateo de dinero
+import { CheckCircle, ArrowLeft, MessageSquare } from 'lucide-react';
+import { formatCLP } from '../lib/utils'; // Tu función de formateo de dinero
 
 interface TicketPagoProps {
   datos: {
@@ -14,6 +14,22 @@ interface TicketPagoProps {
 
 export default function TicketPago({ datos, onVolver }: TicketPagoProps) {
   const { buyOrder, fechaHora, cliente, monto } = datos;
+
+  // Función para construir el texto formateado y abrir WhatsApp
+  const handleCompartirWhatsApp = () => {
+    const mensaje = encodeURIComponent(
+      `🛒 *¡COMPROBANTE DE COMPRA!* 🐾\n\n` +
+      `👤 *Cliente:* ${cliente}\n` +
+      `🔢 *N° de Orden:* ${buyOrder}\n` +
+      `📅 *Fecha y Hora:* ${fechaHora}\n` +
+      `💰 *Total Pagado:* ${formatCLP(monto)}\n\n` +
+      `✅ _Gracias por tu compra. Tu pedido está siendo procesado con éxito._`
+    );
+
+    const urlWhatsApp = `https://api.whatsapp.com/send?text=${mensaje}`;
+    window.open(urlWhatsApp, '_blank');
+  };
+
   return (
     <div className="min-h-[80vh] bg-gray-50 py-12 px-4 flex flex-col items-center justify-center font-sans">
       <div className="max-w-md w-full bg-white rounded-3xl shadow-xl border border-gray-100 p-8 text-center relative overflow-hidden">
@@ -56,10 +72,19 @@ export default function TicketPago({ datos, onVolver }: TicketPagoProps) {
           <span>📲 Un respaldo de este ticket se envió automáticamente a tu WhatsApp.</span>
         </div>
 
+        {/* ACCIÓN NUEVA: Botón para compartir por WhatsApp en el cliente */}
+        <button
+          onClick={handleCompartirWhatsApp}
+          className="mt-6 w-full bg-[#25D366] hover:bg-[#20ba56] text-white font-bold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 shadow-md hover:shadow-lg"
+        >
+          <MessageSquare className="h-4 w-4" />
+          Compartir por WhatsApp
+        </button>
+
         {/* Botón de salida para limpiar estados y volver de manera segura */}
         <button
           onClick={onVolver}
-          className="mt-8 w-full bg-gray-900 hover:bg-orange-500 text-white font-bold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 group"
+          className="mt-3 w-full bg-gray-900 hover:bg-orange-500 text-white font-bold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center gap-2 group"
         >
           <ArrowLeft className="h-4 w-4 group-hover:-translate-x-1 transition-transform" />
           Volver a la Tienda
