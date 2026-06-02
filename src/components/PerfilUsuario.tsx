@@ -6,6 +6,7 @@ interface Mascota {
   id_mascota: number;
   nombre: string;
   especie: string;
+  raza: string;
   edad: number;
 }
 
@@ -48,14 +49,27 @@ export default function UserProfile() {
 
       const { data: mascotasData, error: mascotasError } = await supabase
         .from('mascotas')
-        .select('*')
+        .select(`
+          id_mascota,
+          nombre,
+          edad,
+          especie(id_especie, nombre_especie),
+          razas(id_raza, nombre_raza)
+        `)
         .eq('id_usuario', user.id);
 
       if (mascotasError) {
         console.error('❌ Error cargando mascotas:', mascotasError.message);
         setError('No se pudieron cargar las mascotas.');
       } else {
-        setMascotas(mascotasData || []);
+        const mascotasConNombres = (mascotasData || []).map((item: any) => ({
+          id_mascota: item.id_mascota,
+          nombre: item.nombre,
+          edad: item.edad,
+          especie: item.especie?.nombre_especie ?? 'Sin especie',
+          raza: item.razas?.nombre_raza ?? 'Sin raza',
+        }));
+        setMascotas(mascotasConNombres);
       }
     } catch (err: any) {
       console.error('❌ Error en loadProfileData del cliente:', err);
@@ -124,7 +138,9 @@ export default function UserProfile() {
                   <div className="flex items-start justify-between">
                     <div>
                       <h4 className="font-bold text-gray-800 text-base">{mascota.nombre}</h4>
-                      <p className="text-orange-600 text-xs font-bold capitalize mt-0.5">{mascota.especie}</p>
+                      <p className="text-orange-600 text-xs font-bold capitalize mt-0.5">
+                        {mascota.raza} · {mascota.especie}
+                      </p>
                     </div>
                     <span className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-500 border border-orange-200">
                       {mascota.edad} {mascota.edad === 1 ? 'año' : 'años'}
