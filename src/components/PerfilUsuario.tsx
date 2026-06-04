@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { User, Loader } from 'lucide-react';
+import { User, Loader, Award } from 'lucide-react';
 
 interface Mascota {
   id_mascota: number;
@@ -13,12 +13,13 @@ interface Mascota {
 interface UserInfo {
   id: string;
   email: string;
+  puntos_acumulados: number;
   user_metadata?: {
     full_name?: string;
   };
 }
 
-export default function UserProfile() {
+export default function PerfilUsuario() {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [mascotas, setMascotas] = useState<Mascota[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,6 +34,7 @@ export default function UserProfile() {
       setLoading(true);
       setError(null);
 
+      // 1. Obtener el usuario autenticado
       const { data: { user }, error: authError } = await supabase.auth.getUser();
 
       if (authError || !user) {
@@ -41,12 +43,26 @@ export default function UserProfile() {
         return;
       }
 
+      // 2. Obtener puntos acumulados de la tabla 'perfiles'
+      const { data: perfilData, error: perfilError } = await supabase
+        .from('perfiles')
+        .select('puntos_acumulados')
+        .eq('id', user.id)
+        .single();
+
+      if (perfilError) {
+        console.error('❌ Error cargando puntos del perfil:', perfilError.message);
+      }
+
       setUserInfo({
         id: user.id,
         email: user.email || '',
         user_metadata: user.user_metadata,
+        puntos_acumulados: perfilData?.puntos_acumulados ?? 0,
       });
 
+      // 3. Obtener el listado de mascotas con sus relaciones
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
       const { data: mascotasData, error: mascotasError } = await supabase
         .from('mascotas')
         .select(`
@@ -90,7 +106,7 @@ export default function UserProfile() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-12">
       
-      {/* SECCIÓN SUPERIOR: Info Usuario & Tarjeta de Fidelización */}
+      {/* SECCIÓN SUPERIOR: Info Usuario & Tarjeta de Puntos */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         
         {/* Info Básica del Usuario */}
@@ -107,6 +123,27 @@ export default function UserProfile() {
           </div>
         </div>
 
+        {/* Tarjeta de Puntos Acumulados (Fidelización) */}
+        <div className="bg-gradient-to-br from-orange-500 to-amber-600 p-6 rounded-3xl shadow-xl text-white flex flex-col justify-between relative overflow-hidden">
+          <div className="absolute -right-8 -bottom-8 bg-white/10 w-32 h-32 rounded-full blur-xl pointer-events-none"></div>
+          
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-black uppercase tracking-wider bg-white/20 px-3 py-1 rounded-full">
+              Club Mascotas
+            </span>
+            <Award className="text-orange-100 h-6 w-6 opacity-90" />
+          </div>
+
+          <div className="mt-4">
+            <span className="block text-3xl font-black italic tracking-tight">
+              {userInfo?.puntos_acumulados.toLocaleString('es-CL')}
+            </span>
+            <span className="text-xs text-orange-100 font-medium">
+              Puntos acumulados
+            </span>
+          </div>
+        </div>
+
       </div>
 
       {error && (
@@ -115,47 +152,41 @@ export default function UserProfile() {
         </div>
       )}
 
-      <div className="mt-8 bg-white p-8 rounded-3xl shadow-xl border border-gray-100">
-        
-        {/* Columna Izquierda: Mascotas */}
-        <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100 flex flex-col">
-          <h3 className="text-xl font-bold text-gray-800 mb-6 italic flex items-center gap-2">
-            🐾 Mis Mascotas
-          </h3>
+      {/* SECCIÓN INFERIOR: Listado de Mascotas */}
+      <div className="bg-white p-8 rounded-3xl shadow-xl border border-gray-100">
+        <h3 className="text-xl font-bold text-gray-800 mb-6 italic flex items-center gap-2">
+          🐾 Mis Mascotas
+        </h3>
 
-          {mascotas.length === 0 ? (
-            <div className="text-center py-12 flex-1 flex flex-col justify-center">
-              <p className="text-gray-400 mb-2">Aún no tienes mascotas registradas.</p>
-              <p className="text-gray-500 text-xs">Regresa al home para añadir tu primera mascota.</p>
-            </div>
-          ) : (
-            <div className="space-y-4 overflow-y-auto max-h-[400px] pr-1">
-              {mascotas.map((mascota) => (
-                <div 
-                  key={mascota.id_mascota}
-                  className="bg-gradient-to-br from-orange-50 to-orange-100/50 p-5 rounded-2xl border border-orange-200/60 hover:shadow-md transition-all"
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h4 className="font-bold text-gray-800 text-base">{mascota.nombre}</h4>
-                      <p className="text-orange-600 text-xs font-bold capitalize mt-0.5">
-                        {mascota.raza} · {mascota.especie}
-                      </p>
-                    </div>
-                    <span className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-500 border border-orange-200">
-                      {mascota.edad} {mascota.edad === 1 ? 'año' : 'años'}
-                    </span>
+        {mascotas.length === 0 ? (
+          <div className="text-center py-12">
+            <p className="text-gray-400 mb-2">Aún no tienes mascotas registradas.</p>
+            <p className="text-gray-500 text-xs">Añade tu primera mascota desde tu panel de registro.</p>
+          </div>
+        ) : (
+          <div className="space-y-4 overflow-y-auto max-h-[400px] pr-1">
+            {mascotas.map((mascota) => (
+              <div 
+                key={mascota.id_mascota}
+                className="bg-gradient-to-br from-orange-50 to-orange-100/50 p-5 rounded-2xl border border-orange-200/60 hover:shadow-md transition-all"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h4 className="font-bold text-gray-800 text-base">{mascota.nombre}</h4>
+                    <p className="text-orange-600 text-xs font-bold capitalize mt-0.5">
+                      {mascota.raza} · {mascota.especie}
+                    </p>
                   </div>
-                  <div className="text-[10px] text-gray-400 mt-3 pt-2 border-t border-orange-200/40">
-                    ID Mascota: #{mascota.id_mascota}
-                  </div>
+                  <span className="bg-white px-3 py-1 rounded-full text-xs font-bold text-orange-500 border border-orange-200">
+                    {mascota.edad} {mascota.edad === 1 ? 'año' : 'años'}
+                  </span>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
     </div>
   );
 }
