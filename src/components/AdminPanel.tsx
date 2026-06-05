@@ -1,14 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { PackageCheck, MessageSquare, Clock, Edit3, Save, Package, Plus, Trash2, Layers, BarChart3 } from 'lucide-react';
+import { PackageCheck, MessageSquare, Clock, Edit3, Save, Package, Plus, Trash2, Layers, BarChart3, ShieldAlert, Lock, LogOut } from 'lucide-react';
 // Importamos el nuevo Dashboard
 import AnalyticsDashboard from './AnalyticsDashboard';
 
 export default function AdminPanel() {
+  // 1. COMPROBAR EL ENTORNO: Lee si ejecutaste "npm run dev:admin"
+  const isCustomAdminMode = import.meta.env.VITE_ADMIN_MODE === 'true';
+
   const [activeTab, setActiveTab] = useState<'analytics' | 'pedidos' | 'inventario' | 'nuevo'>('analytics');
   const [pedidos, setPedidos] = useState<any[]>([]);
   const [productos, setProductos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // ESTADOS DE SEGURIDAD INTERNA
+  const [password, setPassword] = useState('');
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const [authError, setAuthError] = useState('');
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [tempStock, setTempStock] = useState<number>(0);
   const [newProduct, setNewProduct] = useState({
@@ -20,11 +29,23 @@ export default function AdminPanel() {
     descripcion: '',
   });
 
+  // Verificar si ya existía una sesión administrativa activa en este navegador
+  useEffect(() => {
+    if (isCustomAdminMode) {
+      const sesionGuardada = localStorage.getItem('admin_console_unlocked');
+      if (sesionGuardada === 'true') {
+        setIsUnlocked(true);
+        fetchData();
+        return;
+      }
+    }
+    setLoading(false);
+  }, [isCustomAdminMode]);
+
   const fetchData = async () => {
     setLoading(true);
-
     try {
-      // CORRECCIÓN DE CONSULTA: Usando nombres y apellidos de tu tabla perfiles
+      // Consulta de ventas y perfiles corregida
       const { data: ventas, error: ventasError } = await supabase
         .from('ventas')
         .select(`
@@ -45,8 +66,8 @@ export default function AdminPanel() {
 
       if (ventasError) {
         console.error('Error al traer ventas:', ventasError);
-      } else {
-        if (ventas) setPedidos(ventas);
+      } else if (ventas) {
+        setPedidos(ventas);
       }
 
       const { data: inventario, error: inventarioError } = await supabase
@@ -56,8 +77,8 @@ export default function AdminPanel() {
 
       if (inventarioError) {
         console.error('Error al traer inventario:', inventarioError);
-      } else {
-        if (inventario) setProductos(inventario);
+      } else if (inventario) {
+        setProductos(inventario);
       }
     } catch (error) {
       console.error('Error en fetchData:', error);
@@ -66,17 +87,33 @@ export default function AdminPanel() {
     }
   };
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  // Manejador del Login con contraseña
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const CONTRASEÑA_MAESTRA = 'BrianAdmin2026'; // 👈 Puedes cambiar tu contraseña aquí
 
-  // --- FUNCIÓN ACTUALIZADA CON LÓGICA DE PUNTOS ---
+    if (password === CONTRASEÑA_MAESTRA) {
+      localStorage.setItem('admin_console_unlocked', 'true');
+      setIsUnlocked(true);
+      setAuthError('');
+      fetchData();
+    } else {
+      setAuthError('Contraseña administrativa incorrecta.');
+    }
+  };
+
+  // Manejador para cerrar sesión de la consola
+  const handleLogoutConsole = () => {
+    localStorage.removeItem('admin_console_unlocked');
+    setIsUnlocked(false);
+    setPassword('');
+  };
+
+  // --- FUNCIÓN CON LÓGICA DE PUNTOS ---
   const procesarPedido = async (id: string, nombreCliente: string, totalVenta: number, idCliente: string) => {
     try {
-      // 1. Calculamos los puntos (1% de la venta)
       const puntosGanados = Math.floor(totalVenta * 0.01);
 
-      // 2. Actualizamos el estado de la venta
       const { error: errorVenta } = await supabase
         .from('ventas')
         .update({ estado: 'listo para retiro' })
@@ -84,7 +121,6 @@ export default function AdminPanel() {
 
       if (errorVenta) throw errorVenta;
 
-      // 3. Obtenemos puntos actuales para sumar
       const { data: perfil } = await supabase
         .from('perfiles')
         .select('puntos_acumulados')
@@ -93,7 +129,6 @@ export default function AdminPanel() {
 
       const nuevosPuntos = (perfil?.puntos_acumulados || 0) + puntosGanados;
 
-      // 4. Guardamos los nuevos puntos
       const { error: errorPuntos } = await supabase
         .from('perfiles')
         .update({ puntos_acumulados: nuevosPuntos })
@@ -101,7 +136,6 @@ export default function AdminPanel() {
 
       if (errorPuntos) throw errorPuntos;
 
-      // 5. Notificación por WhatsApp
       const numeroTienda = '56912345678';
       const mensaje = `¡Hola ${nombreCliente}! Tu pedido #${id} está listo en Maipú. 🐾 Ganaste ${puntosGanados} puntos. Total acumulado: ${nuevosPuntos}.`;
       const whatsappUrl = `https://wa.me/${numeroTienda}?text=${encodeURIComponent(mensaje)}`;
@@ -166,32 +200,94 @@ export default function AdminPanel() {
     }
   };
 
-  // --- NUEVA FUNCIÓN DEL MOTOR ANALÍTICO RFM ---
   const correrMotorRFM = async () => {
     try {
       const { error } = await supabase.rpc('calcular_segmentacion_rfm');
-      
       if (error) throw error;
       
       alert('¡Segmentación RFM actualizada con éxito en tiempo real!');
-      fetchData(); // Recarga los datos para pintar las nuevas categorías
+      fetchData();
     } catch (error) {
       console.error('Error al correr el motor analítico:', error);
       alert('No se pudo procesar la segmentación.');
     }
   };
 
-  if (loading) return <div className="p-10 text-center font-sans">Cargando datos de sucursal Maipú...</div>;
+  // BLOQUEO FILTRADO A: Si entraste usando el comando normal 'npm run dev'
+  if (!isCustomAdminMode) {
+    return (
+      <div className="flex h-screen w-screen flex-col items-center justify-center bg-slate-950 text-white p-6 text-center font-sans">
+        <ShieldAlert className="text-rose-500 h-16 w-16 mb-4 animate-pulse" />
+        <h1 className="text-2xl font-black uppercase tracking-wider">Entorno de Servidor Restringido</h1>
+        <p className="text-slate-400 text-sm mt-2 max-w-md">
+          Este puerto local no tiene activo el módulo analítico. Ejecuta el comando exclusivo en tu terminal para habilitar el portal.
+        </p>
+      </div>
+    );
+  }
 
+  // BLOQUEO FILTRADO B: Si estás en 'npm run dev:admin' pero no te has logueado con contraseña
+  if (!isUnlocked) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-slate-950 text-white font-sans px-4">
+        <div className="w-full max-w-md rounded-[32px] border border-slate-800 bg-slate-900 p-8 shadow-2xl relative">
+          <div className="flex flex-col items-center text-center mb-6">
+            <div className="bg-orange-500/10 p-3 rounded-xl mb-3 border border-orange-500/20">
+              <Lock className="text-orange-500 h-6 w-6" />
+            </div>
+            <h2 className="text-xl font-bold tracking-tight">Consola Administrativa</h2>
+            <p className="text-slate-400 text-xs mt-1">El servidor se encuentra en modo dev:admin</p>
+          </div>
+          
+          <form onSubmit={handlePasswordSubmit} className="space-y-4">
+            <input
+              type="password"
+              placeholder="Introduce la clave maestra"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full rounded-2xl border border-slate-800 bg-slate-950 p-4 outline-none focus:border-orange-500 text-sm text-center tracking-widest text-white placeholder-slate-700 transition"
+              required
+            />
+            {authError && (
+              <p className="text-rose-500 text-xs text-center font-semibold bg-rose-500/10 border border-rose-500/20 py-2.5 rounded-xl">
+                ⚠️ {authError}
+              </p>
+            )}
+            <button type="submit" className="w-full rounded-2xl bg-orange-500 py-3.5 text-sm font-bold hover:bg-orange-600 transition shadow-lg shadow-orange-500/10 text-white">
+              Desbloquear Módulos
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) return <div className="p-10 text-center font-sans text-slate-500">Cargando datos de sucursal Maipú...</div>;
+
+  // ACCESO PERMITIDO COMPLETO (Comando Correcto + Contraseña Correcta)
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 px-4 py-6 font-sans">
       <div className="mx-auto max-w-6xl space-y-8">
         
+        {/* BANNER INDICATIVO DE ENTORNOS */}
+        <div className="bg-slate-900 text-slate-300 text-xs font-mono font-bold flex items-center justify-between px-6 py-2 rounded-2xl shadow-inner border border-slate-800">
+          <span>⚙️ MODO DESARROLLADOR ADMINISTRATIVO ACTIVO (PORT: MAIPÚ)</span>
+          <span className="text-emerald-400 animate-pulse">● ONLINE</span>
+        </div>
+
         {/* HEADER DEL PANEL */}
         <div className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-xl">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="text-sm uppercase tracking-[0.26em] text-orange-500 font-bold">MascotaShop Admin</p>
+              <div className="flex items-center gap-3">
+                <p className="text-sm uppercase tracking-[0.26em] text-orange-500 font-bold">MascotaShop Admin</p>
+                <button 
+                  onClick={handleLogoutConsole}
+                  className="flex items-center gap-1.5 text-xs text-rose-500 bg-rose-50 hover:bg-rose-100 px-3 py-1 rounded-xl transition font-bold"
+                >
+                  <LogOut size={12} /> Cerrar Sesión
+                </button>
+              </div>
               <h1 className="mt-3 text-4xl font-extrabold tracking-tight text-slate-900">Gestión Integral</h1>
               <p className="mt-2 text-sm text-slate-500">Control de analítica, pedidos e inventario en tiempo real.</p>
             </div>

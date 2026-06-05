@@ -62,6 +62,15 @@ export default function App() {
   useEffect(() => {
     fetchProducts();
 
+    // 🚀 BYPASS AUTOMÁTICO EN MODO DESARROLLO ADMINISTRADOR
+    if (import.meta.env.VITE_DEV_AUTO_ADMIN === "true") {
+      console.log("🛡️ Bypass de administrador activado localmente mediante variables de entorno.");
+      setIsAdmin(true);
+      setCurrentView('admin');
+      window.history.pushState({}, '', '/admin');
+      return; // Interrumpe la ejecución para que Supabase no pise el estado local
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session && session.user?.email === ADMIN_EMAIL) {
@@ -81,7 +90,7 @@ export default function App() {
         setIsAdmin(false);
         // CORRECCIÓN: Si venimos con parámetros de Transbank, evitamos que pise el renderizado a 'home'
         const params = new URLSearchParams(window.location.search);
-        if (!params.get('token_ws')) {
+        if (!params.get('token_ws') && params.get('view') !== 'confirmacion') {
           setCurrentView('home');
           if (window.location.pathname === '/admin') {
             window.history.pushState({}, '', '/');
@@ -99,19 +108,24 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tokenWs = params.get('token_ws');
+    const viewParam = params.get('view');
 
-    if (tokenWs) {
+    if (tokenWs || viewParam === "confirmacion") {
       // Congelamos la vista inmediatamente para evitar parpadeos antes de resolver la promesa
       setCurrentView("confirmacion");
       
-      if (!paymentProcessed.current) {
+      const tokenEfectivo = tokenWs || "";
+      if (!paymentProcessed.current && tokenEfectivo) {
         paymentProcessed.current = true; 
-        confirmarPago(tokenWs);
+        confirmarPago(tokenEfectivo);
       }
     }
   }, []);
 
   useEffect(() => {
+    // Si el bypass está activo, no sincronizar ni resetear la ruta con los estados de sesión vacíos
+    if (import.meta.env.VITE_DEV_AUTO_ADMIN === "true") return;
+
     const syncAdminRoute = () => {
       if (window.location.pathname === '/admin') {
         if (session && session.user?.email === ADMIN_EMAIL) {
@@ -528,38 +542,28 @@ function ProductCard({ product, onAdd }: { product: any; onAdd: () => void }) {
         )}
         <img 
           src={product.image} 
-          alt={product.name} 
-          className="max-w-full max-h-full object-contain" 
-          onError={(e) => { (e.target as HTMLImageElement).src = '/images/Master-Dog-Adulto-Carne.png'; }} 
+          alt={product.name}
+          className="w-full h-full object-cover"
         />
       </div>
-      <div className="flex-grow">
-        <div className="flex justify-between items-start">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-orange-500 bg-orange-50 px-2 py-1 rounded-md">{product.category}</span>
-          <span className={`text-[10px] font-bold ${product.stock < 5 ? 'text-red-500' : 'text-gray-400'}`}>Stock: {product.stock}</span>
+      <div className="flex-1 flex flex-col justify-between">
+        <div>
+          <h3 className="text-lg font-semibold mb-2">{product.name}</h3>
+          <p className="text-sm text-gray-500 mb-4">{product.category}</p>
         </div>
-        <h3 className="font-bold text-gray-900 mt-2 mb-1 line-clamp-2">{product.name}</h3>
-      </div>
-      <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-50">
-        <span className="text-xl font-black text-gray-900">{formatCLP(product.price)}</span>
-        <button 
-          onClick={(e) => {
-            e.stopPropagation(); 
-            onAdd(); 
-            console.log(`🛒 Trazando clic en añadir al carrito: ${product.name}`);
-            registrarInteraccionMongo("click_añadir_carrito", {
-              id: product.id,
-              nombre: product.name,
-              categoria: product.category,
-              stock: product.stock,
-              precio: product.price
-            });
-          }} 
-          disabled={isOutOfStock}
-          className={`${isOutOfStock ? 'bg-gray-300' : 'bg-orange-500 hover:bg-orange-600 shadow-orange-200'} text-white p-3 rounded-xl transition-all active:scale-90`}
-        >
-          <ShoppingCart className="h-5 w-5" />
-        </button>
+        <div className="mt-auto flex items-center justify-between gap-4">
+          <span className="text-lg font-bold text-gray-900">${product.price}</span>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onAdd();
+            }}
+            disabled={isOutOfStock}
+            className={`rounded-2xl px-4 py-2 text-sm font-bold transition ${isOutOfStock ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-orange-500 text-white hover:bg-orange-600'}`}
+          >
+            Añadir
+          </button>
+        </div>
       </div>
     </div>
   );
