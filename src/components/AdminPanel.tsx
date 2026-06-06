@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { PackageCheck, MessageSquare, Clock, Edit3, Save, Package, Plus, Trash2, Layers, BarChart3, ShieldAlert, Lock, LogOut } from 'lucide-react';
+import { PackageCheck, MessageSquare, Clock, Edit3, Save, Package, Plus, Trash2, Layers, BarChart3, ShieldAlert, Lock, LogOut, MailCheck } from 'lucide-react';
 // Importamos el nuevo Dashboard
 import AnalyticsDashboard from './AnalyticsDashboard';
 
@@ -20,14 +20,26 @@ export default function AdminPanel() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [tempStock, setTempStock] = useState<number>(0);
+  
+  // 🛠️ ESTADO LOCAL DEL FORMULARIO
   const [newProduct, setNewProduct] = useState({
     nombre_producto: '',
     marca: '',
-    stock: 0,
+    stock: 10, // Default según tu esquema
     precio: 0,
     categoria: '',
-    descripcion: '',
+    descripcion: '', 
   });
+
+  // 🚀 ESTADOS PARA EL DISPARADOR DINÁMICO DE CUPONES
+  const [couponForm, setCouponForm] = useState({
+    correo_cliente: '',
+    nombre_cliente: '',
+    telefono_cliente: '', 
+    codigo_cupon: 'VIP-MASC-2026',
+    descuento: '20% DE DESCUENTO'
+  });
+  const [sendingCoupon, setSendingCoupon] = useState(false);
 
   // Verificar si ya existía una sesión administrativa activa en este navegador
   useEffect(() => {
@@ -45,7 +57,6 @@ export default function AdminPanel() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // Consulta de ventas y perfiles corregida
       const { data: ventas, error: ventasError } = await supabase
         .from('ventas')
         .select(`
@@ -58,7 +69,9 @@ export default function AdminPanel() {
             id, 
             nombres, 
             apellidos,
-            puntos_acumulados
+            puntos_acumulados,
+            telefono,
+            categoria_rfm
           )
         `)
         .neq('estado', 'completado')
@@ -90,7 +103,7 @@ export default function AdminPanel() {
   // Manejador del Login con contraseña
   const handlePasswordSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const CONTRASEÑA_MAESTRA = 'BrianAdmin2026'; // 👈 Puedes cambiar tu contraseña aquí
+    const CONTRASEÑA_MAESTRA = 'BrianAdmin2026';
 
     if (password === CONTRASEÑA_MAESTRA) {
       localStorage.setItem('admin_console_unlocked', 'true');
@@ -109,8 +122,8 @@ export default function AdminPanel() {
     setPassword('');
   };
 
-  // --- FUNCIÓN CON LÓGICA DE PUNTOS ---
-  const procesarPedido = async (id: string, nombreCliente: string, totalVenta: number, idCliente: string) => {
+  // --- FUNCIÓN CON LÓGICA DE PUNTOS Y RECONOCIMIENTO DE RIESGO RFM ---
+  const procesarPedido = async (id: string, nombreCliente: string, totalVenta: number, idCliente: string, perfilCliente: any) => {
     try {
       const puntosGanados = Math.floor(totalVenta * 0.01);
 
@@ -121,13 +134,7 @@ export default function AdminPanel() {
 
       if (errorVenta) throw errorVenta;
 
-      const { data: perfil } = await supabase
-        .from('perfiles')
-        .select('puntos_acumulados')
-        .eq('id', idCliente)
-        .single();
-
-      const nuevosPuntos = (perfil?.puntos_acumulados || 0) + puntosGanados;
+      const nuevosPuntos = (perfilCliente?.puntos_acumulados || 0) + puntosGanados;
 
       const { error: errorPuntos } = await supabase
         .from('perfiles')
@@ -136,9 +143,16 @@ export default function AdminPanel() {
 
       if (errorPuntos) throw errorPuntos;
 
-      const numeroTienda = '56912345678';
-      const mensaje = `¡Hola ${nombreCliente}! Tu pedido #${id} está listo en Maipú. 🐾 Ganaste ${puntosGanados} puntos. Total acumulado: ${nuevosPuntos}.`;
-      const whatsappUrl = `https://wa.me/${numeroTienda}?text=${encodeURIComponent(mensaje)}`;
+      const telefonoDestino = perfilCliente?.telefono || '56912345678';
+      const categoria = perfilCliente?.categoria_rfm?.toLowerCase() || '';
+      let mensajeRiesgo = '';
+      
+      if (categoria.includes('riesgo') || categoria.includes('perder') || categoria.includes('hibernando')) {
+        mensajeRiesgo = ` ¡Te extrañamos en mascotashop, vuelve! 🐾❤️`;
+      }
+
+      const mensaje = `¡Hola ${nombreCliente}! Tu pedido #${id} está listo en Maipú. 🐾 Ganaste ${puntosGanados} puntos. Total acumulado: ${nuevosPuntos}.${mensajeRiesgo}`;
+      const whatsappUrl = `https://wa.me/${telefonoDestino}?text=${encodeURIComponent(mensaje)}`;
       
       window.open(whatsappUrl, '_blank');
       fetchData();
@@ -180,23 +194,51 @@ export default function AdminPanel() {
     }
   };
 
-  const handleAddProduct = async () => {
-    if (!newProduct.nombre_producto || !newProduct.marca || newProduct.stock < 0) {
-      alert('Completa los campos obligatorios correctamente.');
+  // 🛠️ FUNCIÓN DE INSERCIÓN CORREGIDA CON TU ESQUEMA REAL
+  const handleAddProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!newProduct.nombre_producto || !newProduct.marca || newProduct.precio <= 0) {
+      alert('Por favor, completa el nombre, la marca y un precio válido.');
       return;
     }
 
-    const { error } = await supabase
-      .from('inventario')
-      .insert([newProduct]);
+    try {
+      // 1. Generamos un ID de texto único para cumplir con el varchar(50) NOT NULL 'id_alimento'
+      const idUnicoAlimento = `prod-${crypto.randomUUID().substring(0, 8)}`;
 
-    if (error) {
-      alert('Error al agregar producto');
-    } else {
-      alert('Producto agregado al inventario');
-      setNewProduct({ nombre_producto: '', marca: '', stock: 0, precio: 0, categoria: '', descripcion: '' });
+      // 2. Mapeamos las propiedades idénticas a los nombres de tus columnas de PostgreSQL
+      const productoPayload = {
+        id_alimento: idUnicoAlimento,
+        nombre_producto: newProduct.nombre_producto.trim(),
+        marca: newProduct.marca.trim(),
+        stock: Number(newProduct.stock) ?? 10,
+        precio_venta: Number(newProduct.precio), // Mapeado correctamente a tu columna
+        categoria: newProduct.categoria.trim() || 'General',
+        disponible: true
+      };
+
+      const { data, error } = await supabase
+        .from('inventario')
+        .insert([productoPayload])
+        .select();
+
+      if (error) {
+        console.error('Error detallado de Supabase:', error);
+        alert(`No se pudo agregar el producto: ${error.message}`);
+        return;
+      }
+
+      alert(`✨ "${productoPayload.nombre_producto}" se ha ingresado con éxito al inventario.`);
+      
+      // Limpiar formulario y volver a la vista del listado
+      setNewProduct({ nombre_producto: '', marca: '', stock: 10, precio: 0, categoria: '', descripcion: '' });
       setActiveTab('inventario');
       fetchData();
+
+    } catch (err) {
+      console.error('Error de red/runtime en inserción:', err);
+      alert('Ocurrió un fallo crítico al comunicar con la base de datos.');
     }
   };
 
@@ -213,7 +255,49 @@ export default function AdminPanel() {
     }
   };
 
-  // BLOQUEO FILTRADO A: Si entraste usando el comando normal 'npm run dev'
+  const handleSendAdminCoupon = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!couponForm.correo_cliente || !couponForm.codigo_cupon) {
+      alert('Por favor, indica al menos el correo de destino y el código del cupón.');
+      return;
+    }
+
+    setSendingCoupon(true);
+    try {
+      const response = await fetch('/api/admin/enviar-cupon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(couponForm)
+      });
+
+      const resData = await response.json();
+      if (response.ok && resData.success) {
+        alert(`✨ Cupón enviado con éxito a: ${couponForm.correo_cliente}`);
+        setCouponForm({ ...couponForm, correo_cliente: '', nombre_cliente: '', telefono_cliente: '' });
+      } else {
+        alert(`⚠️ Servidor respondió con error: ${resData.error || 'No se pudo despachar.'}`);
+      }
+    } catch (err: any) {
+      console.error("Error al despachar el beneficio:", err);
+      alert("Error de conexión con el backend analítico.");
+    } finally {
+      setSendingCoupon(false);
+    }
+  };
+
+  const handleSendCouponWhatsApp = () => {
+    if (!couponForm.telefono_cliente) {
+      alert('Por favor, introduce el teléfono del cliente para enviar por WhatsApp.');
+      return;
+    }
+
+    const nombre = couponForm.nombre_cliente || 'Amigo/a';
+    const textoWS = `¡Hola ${nombre}! Queremos consentir a tu mascota. 🐾 Te regalamos un cupón exclusivo de *${couponForm.descuento}*. Usa el código: *${couponForm.codigo_cupon}* en tu próxima compra. ¡Te esperamos en MascotaShop!`;
+    
+    const url = `https://wa.me/${couponForm.telefono_cliente}?text=${encodeURIComponent(textoWS)}`;
+    window.open(url, '_blank');
+  };
+
   if (!isCustomAdminMode) {
     return (
       <div className="flex h-screen w-screen flex-col items-center justify-center bg-slate-950 text-white p-6 text-center font-sans">
@@ -226,7 +310,6 @@ export default function AdminPanel() {
     );
   }
 
-  // BLOQUEO FILTRADO B: Si estás en 'npm run dev:admin' pero no te has logueado con contraseña
   if (!isUnlocked) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-slate-950 text-white font-sans px-4">
@@ -249,7 +332,7 @@ export default function AdminPanel() {
               required
             />
             {authError && (
-              <p className="text-rose-500 text-xs text-center font-semibold bg-rose-500/10 border border-rose-500/20 py-2.5 rounded-xl">
+              <p className="text-rose-500 text-xs text-center font-semibold bg-rose-50/10 border border-rose-500/20 py-2.5 rounded-xl">
                 ⚠️ {authError}
               </p>
             )}
@@ -264,7 +347,6 @@ export default function AdminPanel() {
 
   if (loading) return <div className="p-10 text-center font-sans text-slate-500">Cargando datos de sucursal Maipú...</div>;
 
-  // ACCESO PERMITIDO COMPLETO (Comando Correcto + Contraseña Correcta)
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 px-4 py-6 font-sans">
       <div className="mx-auto max-w-6xl space-y-8">
@@ -328,30 +410,112 @@ export default function AdminPanel() {
           {/* VISTA DE ANALÍTICA */}
           {activeTab === 'analytics' && (
             <div className="animate-in fade-in duration-500 space-y-6">
-              <div className="flex justify-between items-center rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div>
-                  <h3 className="font-bold text-slate-900">Motor de Segmentación</h3>
-                  <p className="text-xs text-slate-500">Recalcula el estado RFM de los clientes basándose en sus compras completadas.</p>
+              <div className="flex flex-col md:flex-row justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="space-y-1">
+                  <h3 className="font-bold text-slate-900 text-lg">Motor de Segmentación Analítica</h3>
+                  <p className="text-xs text-slate-500 max-w-lg">
+                    Recalcula el estado RFM de los clientes de forma masiva o inyecta cupones de fidelidad directamente a sus casillas.
+                  </p>
                 </div>
-                <button
-                  onClick={correrMotorRFM}
-                  className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white transition hover:bg-slate-800 shadow-md"
-                >
-                  <BarChart3 size={14} /> Ejecutar Motor RFM
-                </button>
+                <div className="flex items-center">
+                  <button
+                    onClick={correrMotorRFM}
+                    className="w-full md:w-auto flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-xs font-bold text-white transition hover:bg-slate-800 shadow-md"
+                  >
+                    <BarChart3 size={14} /> Ejecutar Motor RFM SQL
+                  </button>
+                </div>
+              </div>
+
+              {/* FORMULARIO INTEGRADO PARA DISPARO DE BENEFICIOS OMNICANAL */}
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+                <div className="border-b border-slate-100 pb-3 flex items-center gap-2">
+                  <MailCheck className="text-orange-500" size={20} />
+                  <h4 className="font-bold text-slate-900">Inyección Omnicanal de Cupones VIP</h4>
+                </div>
+                
+                <form onSubmit={handleSendAdminCoupon} className="grid gap-4 sm:grid-cols-2 md:grid-cols-5 items-end">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[11px] font-bold text-slate-500 uppercase">Nombre Cliente</label>
+                    <input 
+                      type="text" 
+                      placeholder="Ej. Brian"
+                      value={couponForm.nombre_cliente}
+                      onChange={e => setCouponForm({...couponForm, nombre_cliente: e.target.value})}
+                      className="rounded-xl border border-slate-200 p-2.5 text-xs bg-slate-50 outline-none focus:border-orange-500"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[11px] font-bold text-slate-500 uppercase">Correo Electrónico</label>
+                    <input 
+                      type="email" 
+                      placeholder="brian@gmail.com"
+                      value={couponForm.correo_cliente}
+                      onChange={e => setCouponForm({...couponForm, correo_cliente: e.target.value})}
+                      className="rounded-xl border border-slate-200 p-2.5 text-xs bg-slate-50 outline-none focus:border-orange-500"
+                      required
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[11px] font-bold text-slate-500 uppercase">Teléfono (WhatsApp)</label>
+                    <input 
+                      type="text" 
+                      placeholder="569XXXXXXXX"
+                      value={couponForm.telefono_cliente}
+                      onChange={e => setCouponForm({...couponForm, telefono_cliente: e.target.value})}
+                      className="rounded-xl border border-slate-200 p-2.5 text-xs bg-slate-50 outline-none focus:border-orange-500 font-mono"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[11px] font-bold text-slate-500 uppercase">Código Cupón</label>
+                    <input 
+                      type="text" 
+                      value={couponForm.codigo_cupon}
+                      onChange={e => setCouponForm({...couponForm, codigo_cupon: e.target.value})}
+                      className="rounded-xl border border-slate-200 p-2.5 text-xs bg-slate-50 outline-none focus:border-orange-500 font-mono"
+                      required
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[11px] font-bold text-slate-500 uppercase">Glosa Descuento</label>
+                    <input 
+                      type="text" 
+                      value={couponForm.descuento}
+                      onChange={e => setCouponForm({...couponForm, descuento: e.target.value})}
+                      className="rounded-xl border border-slate-200 p-2.5 text-xs bg-slate-50 outline-none focus:border-orange-500"
+                    />
+                  </div>
+                  
+                  <div className="sm:col-span-2 md:col-span-5 grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                    <button
+                      type="submit"
+                      disabled={sendingCoupon}
+                      className="rounded-xl bg-slate-900 py-3 text-xs font-bold text-white shadow-md hover:bg-slate-800 transition disabled:opacity-50"
+                    >
+                      {sendingCoupon ? 'Despachando Correo...' : '✉️ Enviar Cupón por Email (SMTP)'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSendCouponWhatsApp}
+                      className="rounded-xl bg-emerald-600 py-3 text-xs font-bold text-white shadow-md hover:bg-emerald-700 transition"
+                    >
+                      💬 Enviar Cupón por WhatsApp
+                    </button>
+                  </div>
+                </form>
               </div>
               
               <AnalyticsDashboard />
             </div>
           )}
 
-          {/* VISTA DE PEDIDOS ACTUALIZADA WITH PUNTOS */}
+          {/* VISTA DE PEDIDOS */}
           {activeTab === 'pedidos' && (
             <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
               <div className="mb-6 flex items-center justify-between">
                 <div>
                   <h2 className="text-2xl font-bold text-slate-900">Pedidos en preparación</h2>
-                  <p className="mt-1 text-sm text-slate-500">Actualiza el estado y suma puntos automáticamente.</p>
+                  <p className="mt-1 text-sm text-slate-500">Detecta automáticamente el segmento de riesgo y personaliza alertas.</p>
                 </div>
                 <button onClick={fetchData} className="p-2 rounded-full hover:bg-slate-100 transition">
                   <Clock className="h-5 w-5 text-slate-400" />
@@ -360,32 +524,38 @@ export default function AdminPanel() {
 
               {pedidos.length === 0 ? (
                 <div className="rounded-[28px] border border-dashed border-slate-200 bg-slate-50 p-10 text-center text-slate-400">
-                   <PackageCheck className="mx-auto h-12 w-12 opacity-20" />
-                   <p className="mt-4">Sin pedidos pendientes.</p>
+                    <PackageCheck className="mx-auto h-12 w-12 opacity-20" />
+                    <p className="mt-4">Sin pedidos pendientes.</p>
                 </div>
               ) : (
                 <div className="space-y-4">
                   {pedidos.map((pedido) => {
                     const nombreC = pedido.perfiles ? `${pedido.perfiles.nombres} ${pedido.perfiles.apellidos}` : 'Cliente desconocido';
                     const puntosActuales = pedido.perfiles?.puntos_acumulados || 0;
-                    
+                    const categoriaRfm = pedido.perfiles?.categoria_rfm || 'Sin Segmentar';
+                    const esRiesgo = categoriaRfm.toLowerCase().includes('riesgo') || categoriaRfm.toLowerCase().includes('perder') || categoriaRfm.toLowerCase().includes('hibernando');
+
                     return (
                       <article key={pedido.id_venta} className="flex flex-col gap-4 rounded-[28px] border border-slate-100 bg-slate-50/50 p-6 md:flex-row md:items-center md:justify-between">
                         <div className="space-y-2">
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="text-[10px] font-bold uppercase tracking-widest text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md">Venta #{pedido.id_venta}</span>
                             <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">
                               {puntosActuales} pts fidelizados
+                            </span>
+                            <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md ${esRiesgo ? 'bg-rose-100 text-rose-700 border border-rose-200 animate-pulse' : 'bg-slate-200 text-slate-700'}`}>
+                              RFM: {categoriaRfm}
                             </span>
                           </div>
                           <h3 className="text-lg font-bold text-slate-900">{nombreC}</h3>
                           <p className="text-sm text-slate-500">Total: ${pedido.total_venta?.toLocaleString()} • <span className="capitalize">{pedido.estado}</span></p>
                         </div>
                         <button
-                          onClick={() => procesarPedido(pedido.id_venta, nombreC, pedido.total_venta, pedido.id_cliente)}
-                          className="inline-flex items-center justify-center gap-2 rounded-2xl bg-slate-900 px-6 py-3 text-sm font-bold text-white transition hover:bg-slate-800"
+                          onClick={() => procesarPedido(pedido.id_venta, nombreC, pedido.total_venta, pedido.id_cliente, pedido.perfiles)}
+                          className={`inline-flex items-center justify-center gap-2 rounded-2xl px-6 py-3 text-sm font-bold text-white transition ${esRiesgo ? 'bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-200' : 'bg-slate-900 hover:bg-slate-800'}`}
                         >
-                          <MessageSquare className="h-4 w-4" /> Notificar y Sumar Puntos
+                          <MessageSquare className="h-4 w-4" /> 
+                          {esRiesgo ? 'Retener Cliente y Notificar' : 'Notificar y Sumar Puntos'}
                         </button>
                       </article>
                     );
@@ -435,7 +605,8 @@ export default function AdminPanel() {
                             <span className={`font-bold ${prod.stock <= 5 ? 'text-orange-600' : 'text-slate-600'}`}>{prod.stock}</span>
                           )}
                         </td>
-                        <td className="px-6 py-4 text-slate-500">${prod.precio?.toLocaleString()}</td>
+                        {/* Se ajusta también el renderizado de la lista usando prod.precio_venta */}
+                        <td className="px-6 py-4 text-slate-500">${(prod.precio_venta ?? prod.precio)?.toLocaleString()}</td>
                         <td className="px-6 py-4 text-right space-x-2">
                           {editingId === prod.id_alimento ? (
                             <button onClick={() => handleUpdateStock(prod.id_alimento)} className="text-emerald-600 hover:scale-110 transition"><Save size={18}/></button>
@@ -452,44 +623,93 @@ export default function AdminPanel() {
             </section>
           )}
 
-          {/* VISTA DE NUEVO PRODUCTO */}
+          {/* 🛠️ VISTA DE NUEVO PRODUCTO */}
           {activeTab === 'nuevo' && (
-            <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
-              <h2 className="text-2xl font-bold text-slate-900 mb-6">Nuevo Ingreso</h2>
-              <div className="grid gap-4 md:grid-cols-2">
-                <input
-                  placeholder="Nombre Producto"
-                  className="rounded-2xl border border-slate-200 p-3 outline-none focus:border-orange-500"
-                  value={newProduct.nombre_producto}
-                  onChange={e => setNewProduct({...newProduct, nombre_producto: e.target.value})}
-                />
-                <input
-                  placeholder="Marca"
-                  className="rounded-2xl border border-slate-200 p-3 outline-none focus:border-orange-500"
-                  value={newProduct.marca}
-                  onChange={e => setNewProduct({...newProduct, marca: e.target.value})}
-                />
-                <input
-                  type="number"
-                  placeholder="Stock"
-                  className="rounded-2xl border border-slate-200 p-3 outline-none focus:border-orange-500"
-                  value={newProduct.stock}
-                  onChange={e => setNewProduct({...newProduct, stock: Number(e.target.value)})}
-                />
-                <input
-                  type="number"
-                  placeholder="Precio"
-                  className="rounded-2xl border border-slate-200 p-3 outline-none focus:border-orange-500"
-                  value={newProduct.precio}
-                  onChange={e => setNewProduct({...newProduct, precio: Number(e.target.value)})}
-                />
-                <button
-                  onClick={handleAddProduct}
-                  className="md:col-span-2 mt-4 rounded-2xl bg-orange-500 py-4 font-bold text-white shadow-lg hover:bg-orange-600 transition"
-                >
-                  Confirmar e Ingresar al Sistema
-                </button>
+            <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm animate-in fade-in duration-300">
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-slate-900">Nuevo Ingreso de Inventario</h2>
+                <p className="text-slate-500 text-sm mt-1">Inserta un nuevo artículo o alimento directamente al stock central de Supabase.</p>
               </div>
+
+              <form onSubmit={handleAddProduct} className="grid gap-5 md:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-slate-600 uppercase">Nombre del Producto *</label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Alimento Perro Adulto Razas Pequeñas"
+                    className="rounded-2xl border border-slate-200 p-3.5 outline-none focus:border-orange-500 bg-slate-50 text-sm transition"
+                    value={newProduct.nombre_producto}
+                    onChange={e => setNewProduct({...newProduct, nombre_producto: e.target.value})}
+                    required
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-slate-600 uppercase">Marca *</label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Royal Canin"
+                    className="rounded-2xl border border-slate-200 p-3.5 outline-none focus:border-orange-500 bg-slate-50 text-sm transition"
+                    value={newProduct.marca}
+                    onChange={e => setNewProduct({...newProduct, marca: e.target.value})}
+                    required
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-slate-600 uppercase">Stock Inicial</label>
+                  <input
+                    type="number"
+                    placeholder="Cantidad disponible"
+                    min="0"
+                    className="rounded-2xl border border-slate-200 p-3.5 outline-none focus:border-orange-500 bg-slate-50 text-sm transition font-mono"
+                    value={newProduct.stock}
+                    onChange={e => setNewProduct({...newProduct, stock: Number(e.target.value)})}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-slate-600 uppercase">Precio Unitario ($) *</label>
+                  <input
+                    type="number"
+                    placeholder="Ej. 24990"
+                    min="1"
+                    className="rounded-2xl border border-slate-200 p-3.5 outline-none focus:border-orange-500 bg-slate-50 text-sm transition font-mono"
+                    value={newProduct.precio}
+                    onChange={e => setNewProduct({...newProduct, precio: Number(e.target.value)})}
+                    required
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5 md:col-span-2">
+                  <label className="text-xs font-bold text-slate-600 uppercase">Categoría</label>
+                  <input
+                    type="text"
+                    placeholder="Ej. Alimentos, Juguetes, Farmacia"
+                    className="rounded-2xl border border-slate-200 p-3.5 outline-none focus:border-orange-500 bg-slate-50 text-sm transition"
+                    value={newProduct.categoria}
+                    onChange={e => setNewProduct({...newProduct, categoria: e.target.value})}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5 md:col-span-2">
+                  <label className="text-xs font-bold text-slate-600 uppercase">Descripción / Glosa (Opcional - No guardada en DB)</label>
+                  <textarea
+                    placeholder="Detalles internos que no se guardarán por límites de estructura..."
+                    rows={3}
+                    className="rounded-2xl border border-slate-200 p-3.5 outline-none focus:border-orange-500 bg-slate-50 text-sm transition resize-none"
+                    value={newProduct.descripcion}
+                    onChange={e => setNewProduct({...newProduct, descripcion: e.target.value})}
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="md:col-span-2 mt-2 rounded-2xl bg-orange-500 py-4 font-bold text-white shadow-lg shadow-orange-500/20 hover:bg-orange-600 transition tracking-wide text-sm"
+                >
+                  Confirmar e Ingresar al Sistema de Sucursal
+                </button>
+              </form>
             </section>
           )}
 

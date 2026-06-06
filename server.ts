@@ -9,6 +9,8 @@ import { fileURLToPath } from "url";
 import pkg from 'transbank-sdk';
 import { createClient } from '@supabase/supabase-js';
 import { MongoClient } from 'mongodb';
+// 🚀 INYECCIÓN: Importación de Nodemailer para notificaciones por correo
+import nodemailer from 'nodemailer';
 
 const { WebpayPlus, Options, IntegrationCommerceCodes, IntegrationApiKeys, Environment } = pkg as any;
 
@@ -71,6 +73,19 @@ async function startServer() {
       Environment.Integration
     )
   );
+
+  // =========================================================================
+  // CONFIGURACIÓN DE NODEMAILER (Credenciales leídas desde el .env.local)
+  // =========================================================================
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || "smtp.gmail.com",
+    port: Number(process.env.SMTP_PORT) || 465,
+    secure: true,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS, // Tu contraseña de aplicación segura
+    },
+  });
 
   // =========================================================================
   // ENDPOINT DE TRAZABILIDAD - MONGODB (Exigencia de Ingeniería del Profesor)
@@ -138,7 +153,6 @@ async function startServer() {
     }
 
     console.log('🔁 Redirect desde Transbank con token_ws:', token_ws);
-    // CAMBIO: Ahora inyectamos la query variable '?view=confirmacion' para que React no recargue en 'home'
     return res.redirect(`/?view=confirmacion&token_ws=${encodeURIComponent(token_ws)}`);
   });
 
@@ -221,7 +235,6 @@ async function startServer() {
           console.log("6. 🎁 Calculando y guardando puntos de fidelización...");
           const puntosGanados = Math.floor(commitResponse.amount * 0.01); // 1% del total
 
-          // CORRECCIÓN: Ajustamos la query para usar las columnas reales de la DB (nombres, apellidos, puntos_acumulados)
           const { data: perfil, error: errorPerfil } = await supabaseServerInstance
             .from('perfiles')
             .select('puntos_acumulados, nombres, apellidos')
@@ -280,7 +293,41 @@ async function startServer() {
         // F. Gatillar envío automático asíncrono a WhatsApp
         await enviarNotificacionWhatsApp(estructuraTicket);
 
-        // Retornamos el éxito con los datos estructurados para renderizar el Ticket en el Frontend
+        // =========================================================================
+        // 🚀 INYECCIÓN: ENVÍO AUTOMÁTICO DE CORREO HTML PREMIUM AL CLIENTE DE PRUEBAS
+        // =========================================================================
+        const destinoCorreoCliente = req.body.email_usuario || process.env.CLIENT_TEST_EMAIL || "brian.jovani.g@gmail.com";
+        
+        const listaProductosHTML = cartItems && cartItems.length > 0
+          ? cartItems.map((p: any) => `<li>${p.quantity || 1}x ${p.name || 'Producto'} - $${(p.price * (p.quantity || 1)).toLocaleString('es-CL')}</li>`).join('')
+          : '<li>Detalle de productos en procesamiento por LoyalData</li>';
+
+        transporter.sendMail({
+          from: `"MascotaShop 🐾" <${process.env.SMTP_USER}>`,
+          to: destinoCorreoCliente,
+          subject: `Confirmación de Compra #${estructuraTicket.buyOrder} - MascotaShop`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: auto; border: 1px solid #e2e8f0; padding: 25px; border-radius: 16px; background-color: #ffffff;">
+              <h2 style="color: #f97316; margin-top: 0;">¡Gracias por tu compra en MascotaShop! 🐾</h2>
+              <p style="color: #475569;">Hola <strong>${estructuraTicket.cliente}</strong>, tu pago ha sido procesado con éxito a través de Transbank.</p>
+              <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+              <p style="color: #1e293b;"><strong>Orden de Compra:</strong> ${estructuraTicket.buyOrder}</p>
+              <p style="color: #1e293b;"><strong>Detalle de tu pedido:</strong></p>
+              <ul style="color: #475569; padding-left: 20px;">${listaProductosHTML}</ul>
+              <h3 style="color: #0f172a; background-color: #f8fafc; padding: 12px; border-radius: 8px; display: inline-block;">
+                Total Pagado: $${estructuraTicket.monto.toLocaleString('es-CL')}
+              </h3>
+              <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+              <p style="font-size: 12px; color: #94a3b8; text-align: center;">MascotaShop SpA — Panel Analítico LoyalData 2026</p>
+            </div>
+          `,
+        }).then(() => {
+          console.log(`📧 [Nodemailer] Notificación enviada con éxito al cliente: ${destinoCorreoCliente}`);
+        }).catch(err => {
+          console.error("❌ [Nodemailer] Error al despachar correo al cliente:", err.message);
+        });
+        // =========================================================================
+
         return res.json({ 
           success: true, 
           data: estructuraTicket 
@@ -314,7 +361,6 @@ async function startServer() {
       const totalIngresos = todasLasVentas?.reduce((sum, v) => sum + Number(v.total_venta), 0) || 0;
 
       // 2. Traer perfiles completos de la DB para evadir el bloqueo de RLS en el front
-      // CORRECCIÓN: Cambiado 'puntos_acumulados' por consistencia con tu esquema
       const { data: todosLosPerfiles, error: errPerfiles } = await supabaseServerInstance
         .from('perfiles')
         .select('puntos_acumulados, segmento_rfm');
@@ -362,6 +408,47 @@ async function startServer() {
 
     } catch (error: any) {
       console.error("❌ Error al obtener métricas consolidadas del CRM:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // =========================================================================
+  // 🏆 ENDPOINT: ACCIÓN DEL ADMINISTRADOR PARA ENVIAR CUPONES PERSONALIZADOS
+  // =========================================================================
+  app.post('/api/admin/enviar-cupon', async (req, res) => {
+    try {
+      const { correo_cliente, nombre_cliente, codigo_cupon, descuento } = req.body;
+
+      if (!correo_cliente || !codigo_cupon) {
+        return res.status(400).json({ error: "Faltan datos obligatorios (Correo o Código)" });
+      }
+
+      await transporter.sendMail({
+        from: `"MascotaShop VIP 🏆" <${process.env.SMTP_USER}>`,
+        to: correo_cliente,
+        subject: `¡Tienes un cupón de ${descuento || 'Descuento'} de regalo! 🎁`,
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; margin: auto; background-color: #0b1329; color: #ffffff; padding: 35px; border-radius: 20px; text-align: center;">
+            <span style="background-color: #f97316; color: white; padding: 6px 14px; border-radius: 9999px; font-size: 12px; font-weight: bold; text-transform: uppercase;">Beneficio Exclusivo</span>
+            <h2 style="color: #10b981; margin-top: 20px; font-size: 24px;">¡Felicidades ${nombre_cliente || 'Cliente'}! 🏆</h2>
+            <p style="color: #94a3b8; font-size: 16px;">El administrador de MascotaShop te ha otorgado un beneficio especial premium.</p>
+            
+            <div style="background-color: #1e293b; padding: 25px; border-radius: 14px; margin: 25px 0; border: 2px dashed #f97316;">
+              <p style="margin: 0; color: #94a3b8; font-size: 15px;">Tu cupón de **${descuento || 'Regalo'}** es:</p>
+              <h1 style="margin: 12px 0; color: #f97316; letter-spacing: 5px; font-size: 32px;">${codigo_cupon}</h1>
+              <p style="margin: 0; color: #64748b; font-size: 12px;">Aplica este código al finalizar tu próximo carrito</p>
+            </div>
+            
+            <p style="font-size: 11px; color: #475569; margin-top: 20px;">Este beneficio es gestionado directamente por administración.</p>
+          </div>
+        `,
+      });
+
+      console.log(`🎁 [Admin] Cupón ${codigo_cupon} enviado con éxito a ${correo_cliente}`);
+      return res.json({ success: true, message: "Cupón enviado exitosamente al cliente." });
+
+    } catch (error: any) {
+      console.error("❌ Error al enviar cupón desde el panel:", error.message);
       return res.status(500).json({ error: error.message });
     }
   });
