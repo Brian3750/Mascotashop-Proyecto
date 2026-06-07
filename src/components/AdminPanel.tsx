@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { PackageCheck, MessageSquare, Clock, Edit3, Save, Package, Plus, Trash2, Layers, BarChart3, ShieldAlert, Lock, LogOut, MailCheck } from 'lucide-react';
+import { PackageCheck, MessageSquare, Clock, Edit3, Save, Package, Plus, Trash2, Layers, BarChart3, ShieldAlert, Lock, LogOut, MailCheck, CheckCircle2 } from 'lucide-react';
 // Importamos el nuevo Dashboard
 import AnalyticsDashboard from './AnalyticsDashboard';
 
@@ -25,7 +25,7 @@ export default function AdminPanel() {
   const [newProduct, setNewProduct] = useState({
     nombre_producto: '',
     marca: '',
-    stock: 10, // Default según tu esquema
+    stock: 10,
     precio: 0,
     categoria: '',
     descripcion: '', 
@@ -57,6 +57,7 @@ export default function AdminPanel() {
   const fetchData = async () => {
     setLoading(true);
     try {
+      // Modificado para traer pedidos 'pendiente' (recién comprados online) o 'apartado'
       const { data: ventas, error: ventasError } = await supabase
         .from('ventas')
         .select(`
@@ -74,7 +75,7 @@ export default function AdminPanel() {
             categoria_rfm
           )
         `)
-        .neq('estado', 'completado')
+        .in('estado', ['pendiente','Pendiente', 'apartado','Apartado']) // Captura las compras online y las que estás procesando
         .order('fecha_venta', { ascending: false });
 
       if (ventasError) {
@@ -122,8 +123,25 @@ export default function AdminPanel() {
     setPassword('');
   };
 
-  // --- FUNCIÓN CON LÓGICA DE PUNTOS Y RECONOCIMIENTO DE RIESGO RFM ---
-  const procesarPedido = async (id: string, nombreCliente: string, totalVenta: number, idCliente: string, perfilCliente: any) => {
+  // 🛠️ FUNCIÓN NUEVA: CAMBIAR ESTADO A "APARTADO" (PREPARACIÓN)
+  const apartarPedido = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('ventas')
+        .update({ estado: 'apartado' })
+        .eq('id_venta', id);
+
+      if (error) throw error;
+      alert(`📦 Pedido #${id} marcado como APARTADO. Los productos ya están reservados.`);
+      fetchData();
+    } catch (error) {
+      console.error("Error al apartar el pedido:", error);
+      alert("No se pudo apartar el pedido.");
+    }
+  };
+
+  // --- FUNCIÓN CON LÓGICA DE PUNTOS Y RECONOCIMIENTO DE RIESGO RFM (PASA A LISTO PARA RETIRO) ---
+  const finalizarYNotificarPedido = async (id: string, nombreCliente: string, totalVenta: number, idCliente: string, perfilCliente: any) => {
     try {
       const puntosGanados = Math.floor(totalVenta * 0.01);
 
@@ -143,7 +161,7 @@ export default function AdminPanel() {
 
       if (errorPuntos) throw errorPuntos;
 
-      const telefonoDestino = perfilCliente?.telefono || '56912345678';
+      const telefonoDestino = perfilCliente?.telefono || '56945685662';
       const categoria = perfilCliente?.categoria_rfm?.toLowerCase() || '';
       let mensajeRiesgo = '';
       
@@ -151,7 +169,7 @@ export default function AdminPanel() {
         mensajeRiesgo = ` ¡Te extrañamos en mascotashop, vuelve! 🐾❤️`;
       }
 
-      const mensaje = `¡Hola ${nombreCliente}! Tu pedido #${id} está listo en Maipú. 🐾 Ganaste ${puntosGanados} puntos. Total acumulado: ${nuevosPuntos}.${mensajeRiesgo}`;
+      const mensaje = `¡Hola ${nombreCliente}! Tu pedido #${id} está listo para ser retirado en nuestra sucursal de Maipú. 🐾 Ganaste ${puntosGanados} puntos. Total acumulado: ${nuevosPuntos}.${mensajeRiesgo}`;
       const whatsappUrl = `https://wa.me/${telefonoDestino}?text=${encodeURIComponent(mensaje)}`;
       
       window.open(whatsappUrl, '_blank');
@@ -159,7 +177,7 @@ export default function AdminPanel() {
 
     } catch (error) {
       console.error("Error en el proceso:", error);
-      alert("No se pudo procesar los puntos");
+      alert("No se pudo completar el pedido");
     }
   };
 
@@ -194,26 +212,21 @@ export default function AdminPanel() {
     }
   };
 
-  // 🛠️ FUNCIÓN DE INSERCIÓN CORREGIDA CON TU ESQUEMA REAL
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    
     if (!newProduct.nombre_producto || !newProduct.marca || newProduct.precio <= 0) {
       alert('Por favor, completa el nombre, la marca y un precio válido.');
       return;
     }
 
     try {
-      // 1. Generamos un ID de texto único para cumplir con el varchar(50) NOT NULL 'id_alimento'
       const idUnicoAlimento = `prod-${crypto.randomUUID().substring(0, 8)}`;
-
-      // 2. Mapeamos las propiedades idénticas a los nombres de tus columnas de PostgreSQL
       const productoPayload = {
         id_alimento: idUnicoAlimento,
         nombre_producto: newProduct.nombre_producto.trim(),
         marca: newProduct.marca.trim(),
         stock: Number(newProduct.stock) ?? 10,
-        precio_venta: Number(newProduct.precio), // Mapeado correctamente a tu columna
+        precio_venta: Number(newProduct.precio),
         categoria: newProduct.categoria.trim() || 'General',
         disponible: true
       };
@@ -230,12 +243,9 @@ export default function AdminPanel() {
       }
 
       alert(`✨ "${productoPayload.nombre_producto}" se ha ingresado con éxito al inventario.`);
-      
-      // Limpiar formulario y volver a la vista del listado
       setNewProduct({ nombre_producto: '', marca: '', stock: 10, precio: 0, categoria: '', descripcion: '' });
       setActiveTab('inventario');
       fetchData();
-
     } catch (err) {
       console.error('Error de red/runtime en inserción:', err);
       alert('Ocurrió un fallo crítico al comunicar con la base de datos.');
@@ -246,7 +256,6 @@ export default function AdminPanel() {
     try {
       const { error } = await supabase.rpc('calcular_segmentacion_rfm');
       if (error) throw error;
-      
       alert('¡Segmentación RFM actualizada con éxito en tiempo real!');
       fetchData();
     } catch (error) {
@@ -509,23 +518,23 @@ export default function AdminPanel() {
             </div>
           )}
 
-          {/* VISTA DE PEDIDOS */}
+          {/* 📦 VISTA DE PEDIDOS TOTALMENTE OPERATIVA */}
           {activeTab === 'pedidos' && (
             <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
               <div className="mb-6 flex items-center justify-between">
                 <div>
-                  <h2 className="text-2xl font-bold text-slate-900">Pedidos en preparación</h2>
-                  <p className="mt-1 text-sm text-slate-500">Detecta automáticamente el segmento de riesgo y personaliza alertas.</p>
+                  <h2 className="text-2xl font-bold text-slate-900">Control de Órdenes Online</h2>
+                  <p className="mt-1 text-sm text-slate-500">Aparta las compras entrantes para congelar mercadería y despacha avisos de retiro.</p>
                 </div>
-                <button onClick={fetchData} className="p-2 rounded-full hover:bg-slate-100 transition">
-                  <Clock className="h-5 w-5 text-slate-400" />
+                <button onClick={fetchData} className="p-2 rounded-full hover:bg-slate-100 transition text-slate-400 hover:text-slate-600">
+                  <Clock className="h-5 w-5" />
                 </button>
               </div>
 
               {pedidos.length === 0 ? (
                 <div className="rounded-[28px] border border-dashed border-slate-200 bg-slate-50 p-10 text-center text-slate-400">
                     <PackageCheck className="mx-auto h-12 w-12 opacity-20" />
-                    <p className="mt-4">Sin pedidos pendientes.</p>
+                    <p className="mt-4">Sin pedidos online por gestionar en este momento.</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -534,29 +543,51 @@ export default function AdminPanel() {
                     const puntosActuales = pedido.perfiles?.puntos_acumulados || 0;
                     const categoriaRfm = pedido.perfiles?.categoria_rfm || 'Sin Segmentar';
                     const esRiesgo = categoriaRfm.toLowerCase().includes('riesgo') || categoriaRfm.toLowerCase().includes('perder') || categoriaRfm.toLowerCase().includes('hibernando');
+                    const esApartado = pedido.estado === 'apartado';
 
                     return (
                       <article key={pedido.id_venta} className="flex flex-col gap-4 rounded-[28px] border border-slate-100 bg-slate-50/50 p-6 md:flex-row md:items-center md:justify-between">
                         <div className="space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-[10px] font-bold uppercase tracking-widest text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md">Venta #{pedido.id_venta}</span>
+                            
+                            {/* Etiqueta de estado dinámico */}
+                            <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md ${esApartado ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-blue-100 text-blue-800'}`}>
+                              Estado: {pedido.estado}
+                            </span>
+
                             <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">
-                              {puntosActuales} pts fidelizados
+                              {puntosActuales} pts
                             </span>
                             <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md ${esRiesgo ? 'bg-rose-100 text-rose-700 border border-rose-200 animate-pulse' : 'bg-slate-200 text-slate-700'}`}>
                               RFM: {categoriaRfm}
                             </span>
                           </div>
                           <h3 className="text-lg font-bold text-slate-900">{nombreC}</h3>
-                          <p className="text-sm text-slate-500">Total: ${pedido.total_venta?.toLocaleString()} • <span className="capitalize">{pedido.estado}</span></p>
+                          <p className="text-sm text-slate-500">Total a pagar: ${pedido.total_venta?.toLocaleString()}</p>
                         </div>
-                        <button
-                          onClick={() => procesarPedido(pedido.id_venta, nombreC, pedido.total_venta, pedido.id_cliente, pedido.perfiles)}
-                          className={`inline-flex items-center justify-center gap-2 rounded-2xl px-6 py-3 text-sm font-bold text-white transition ${esRiesgo ? 'bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-200' : 'bg-slate-900 hover:bg-slate-800'}`}
-                        >
-                          <MessageSquare className="h-4 w-4" /> 
-                          {esRiesgo ? 'Retener Cliente y Notificar' : 'Notificar y Sumar Puntos'}
-                        </button>
+                        
+                        <div className="flex flex-wrap gap-2">
+                          {/* Botón 1: Apartar Pedido (Solo se muestra si está en estado 'pendiente') */}
+                          {!esApartado && (
+                            <button
+                              onClick={() => apartarPedido(pedido.id_venta)}
+                              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-amber-500 hover:bg-amber-600 px-5 py-3 text-sm font-bold text-white transition shadow-sm"
+                            >
+                              <Package className="h-4 w-4" /> 
+                              Apartar Mercadería
+                            </button>
+                          )}
+
+                          {/* Botón 2: Terminar y Notificar (Disponible siempre para pasarlo a retiro) */}
+                          <button
+                            onClick={() => finalizarYNotificarPedido(pedido.id_venta, nombreC, pedido.total_venta, pedido.id_cliente, pedido.perfiles)}
+                            className={`inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-bold text-white transition ${esRiesgo ? 'bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-200' : 'bg-slate-900 hover:bg-slate-800'}`}
+                          >
+                            <MessageSquare className="h-4 w-4" /> 
+                            {esApartado ? 'Listo para Retiro ✅' : 'Saltar a Retiro Directo'}
+                          </button>
+                        </div>
                       </article>
                     );
                   })}
@@ -605,7 +636,6 @@ export default function AdminPanel() {
                             <span className={`font-bold ${prod.stock <= 5 ? 'text-orange-600' : 'text-slate-600'}`}>{prod.stock}</span>
                           )}
                         </td>
-                        {/* Se ajusta también el renderizado de la lista usando prod.precio_venta */}
                         <td className="px-6 py-4 text-slate-500">${(prod.precio_venta ?? prod.precio)?.toLocaleString()}</td>
                         <td className="px-6 py-4 text-right space-x-2">
                           {editingId === prod.id_alimento ? (
@@ -623,7 +653,7 @@ export default function AdminPanel() {
             </section>
           )}
 
-          {/* 🛠️ VISTA DE NUEVO PRODUCTO */}
+          {/* VISTA DE NUEVO PRODUCTO */}
           {activeTab === 'nuevo' && (
             <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm animate-in fade-in duration-300">
               <div className="mb-6">

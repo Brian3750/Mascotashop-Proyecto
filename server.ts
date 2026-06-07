@@ -9,7 +9,6 @@ import { fileURLToPath } from "url";
 import pkg from 'transbank-sdk';
 import { createClient } from '@supabase/supabase-js';
 import { MongoClient } from 'mongodb';
-// 🚀 INYECCIÓN: Importación de Nodemailer para notificaciones por correo
 import nodemailer from 'nodemailer';
 
 const { WebpayPlus, Options, IntegrationCommerceCodes, IntegrationApiKeys, Environment } = pkg as any;
@@ -17,7 +16,6 @@ const { WebpayPlus, Options, IntegrationCommerceCodes, IntegrationApiKeys, Envir
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// --- CONFIGURACIÓN DEL CLÚSTER EN LA NUBE ---
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://admin_loyaldata:UINrVDBJFVG8hheJ@clusterloyaldataanalyti.hwpmyyl.mongodb.net/LoyalDataAnalytics?appName=ClusterLoyalDataAnalytics";
 
 async function conectarMongoDB() {
@@ -26,33 +24,17 @@ async function conectarMongoDB() {
   return client.db("LoyalDataAnalytics");
 }
 
-// --- CONFIGURACIÓN DE SUPABASE ---
 const supabaseUrl = 'https://klicotyrfitmpltrqewh.supabase.co'; 
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtsaWNvdHlyZml0bXBsdHJxZXdoIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTt7NTA4NDEyMCwiZXhwIjoyMDkwNjYwMTIwfQ.KUoy-udkq2cKN_zfBUJtASOgMYJ9zJBq4CXxP-cektg'; 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 let mongoDb: any;
 
-// =========================================================================
-// FUNCIÓN AUXILIAR: NOTIFICACIÓN AUTOMÁTICA VÍA WHATSAPP BUSINESS API
-// =========================================================================
 async function enviarNotificacionWhatsApp(datosTicket: any) {
   try {
     console.log(`📲 [WhatsApp API] Enviando ticket de forma automática...`);
     console.log(`📱 Destinatario: ${datosTicket.cliente}`);
     console.log(`📱 Mensaje: Tu compra ${datosTicket.buyOrder} por un monto de $${datosTicket.monto} ha sido procesada con éxito a las ${datosTicket.fechaHora}.`);
-    
-    // Aquí puedes realizar el fetch real hacia la API de WhatsApp si cuentas con los tokens:
-    /*
-    await fetch('https://graph.facebook.com/v17.0/TU_PHONE_NUMBER_ID/messages', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ ... })
-    });
-    */
     return true;
   } catch (error: any) {
     console.error("⚠️ No se pudo despachar el mensaje de WhatsApp:", error.message);
@@ -74,21 +56,18 @@ async function startServer() {
     )
   );
 
-  // =========================================================================
-  // CONFIGURACIÓN DE NODEMAILER (Credenciales leídas desde el .env.local)
-  // =========================================================================
   const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST || "smtp.gmail.com",
     port: Number(process.env.SMTP_PORT) || 465,
     secure: true,
     auth: {
       user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS, // Tu contraseña de aplicación segura
+      pass: process.env.SMTP_PASS,
     },
   });
 
   // =========================================================================
-  // ENDPOINT DE TRAZABILIDAD - MONGODB (Exigencia de Ingeniería del Profesor)
+  // ENDPOINT DE TRAZABILIDAD - MONGODB
   // =========================================================================
   app.post('/api/trazabilidad', async (req, res) => {
     try {
@@ -130,11 +109,38 @@ async function startServer() {
   });
 
   // =========================================================================
-  // ENDPOINTS TRANSACCIONALES - WEBPAY PLUS
+  // 🔥 ENDPOINT TRANSACCIONAL MODIFICADO: VALIDACIÓN DE STOCK ANTES DE PAGO
   // =========================================================================
   app.post('/api/crear-pago', async (req, res) => {
     try {
-      const { total, sessionId, buyOrder } = req.body;
+      const { total, sessionId, buyOrder, cartItems } = req.body;
+
+      // VALIDACIÓN CRÍTICA: Iterar sobre el carrito enviado para comprobar stock actual en Supabase
+      if (cartItems && cartItems.length > 0) {
+        const supabaseServerInstance = getSupabaseServer();
+        
+        for (const item of cartItems) {
+          const { data: productoDB, error: errorStock } = await supabaseServerInstance
+            .from('inventario')
+            .select('nombre_producto, stock')
+            .eq('id_alimento', item.id) // O item.id_alimento según lo uses en tu catálogo
+            .single();
+
+          if (errorStock || !productoDB) {
+            return res.status(404).json({ error: `El producto "${item.name || 'Desconocido'}" no se encuentra en el inventario.` });
+          }
+
+          // Si el cliente pide más unidades de las que hay físicamente en Supabase
+          if (item.quantity > productoDB.stock) {
+            console.log(`🚫 Intento de sobrecompra bloqueado: ${productoDB.nombre_producto}. Pide ${item.quantity}, stock: ${productoDB.stock}`);
+            return res.status(400).json({ 
+              error: `¡Stock insuficiente para ${productoDB.nombre_producto}! Solo quedan ${productoDB.stock} unidades en la sucursal y has intentado llevar ${item.quantity}.` 
+            });
+          }
+        }
+      }
+
+      // Si pasa el control de stock, se procesa la orden en Transbank
       const createResponse = await tx.create(buyOrder, sessionId, Math.round(Number(total)), `http://localhost:3000/`);
       res.json(createResponse); 
     } catch (error: any) {
@@ -143,9 +149,6 @@ async function startServer() {
     }
   });
 
-  // =========================================================================
-  // 🧾 MODIFICACIÓN: RETURN URL DE TRANSBANK CON PARÁMETROS EXPLÍCITOS DE SPA
-  // =========================================================================
   app.post('/', (req, res) => {
     const token_ws = req.body?.token_ws;
     if (!token_ws) {
@@ -157,7 +160,7 @@ async function startServer() {
   });
 
   // =========================================================================
-  // 🧾 ENDPOINT DE CONFIRMACIÓN DE PAGO - TRANSBANK & SUPABASE CRM
+  // 🧾 ENDPOINT DE CONFIRMACIÓN DE PAGO - TRANSBANK & PERSISTENCIA RECHAZADA
   // =========================================================================
   app.post('/api/confirmar-pago', async (req, res) => {
     const { cartItems, id_usuario } = req.body;
@@ -167,14 +170,13 @@ async function startServer() {
     try {
       console.log("1. Recibiendo token de Transbank...");
       const commitResponse = await tx.commit(token);
+      const supabaseServerInstance = getSupabaseServer();
 
       if (commitResponse.response_code === 0) {
         console.log("2. ✅ Pago aprobado. Registrando en Supabase...");
 
         const idClienteFinal = id_usuario || commitResponse.session_id;
-        const supabaseServerInstance = getSupabaseServer();
 
-        // A. Insertar Venta usando la instancia segura creada
         const { data: ventaData, error: errorVenta } = await supabaseServerInstance
           .from('ventas')
           .insert([{
@@ -192,12 +194,11 @@ async function startServer() {
         const nuevaVenta = ventaData[0];
         console.log(`3. ✨ Venta ${nuevaVenta.id_venta} creada.`);
 
-        // B. Insertar Detalles e Actualizar Stock usando la instancia segura
         if (cartItems && cartItems.length > 0) {
           const detalles = cartItems.map((item: any) => ({
             id_venta: nuevaVenta.id_venta,
             id_alimento: item.id,
-            cantidad: item.quantity, 
+            quantity: item.quantity, 
             precio_unitario: item.price
           }));
 
@@ -210,7 +211,6 @@ async function startServer() {
           } else {
             console.log("4. 📦 Detalles guardados con éxito.");
 
-            // C. DESCUENTO AUTOMÁTICO DE STOCK
             console.log("5. 📉 Actualizando inventario...");
             for (const item of cartItems) {
               const { error: errorStock } = await supabaseServerInstance
@@ -227,13 +227,11 @@ async function startServer() {
           }
         }
 
-        // Variable para almacenar el nombre que irá al ticket y a WhatsApp
         let nombreClienteTicket = "Cliente MascotaShop";
 
-        // D. GUARDAR PUNTOS DE FIDELIZACIÓN & EJECUTAR MOTOR RFM
         if (id_usuario) {
           console.log("6. 🎁 Calculando y guardando puntos de fidelización...");
-          const puntosGanados = Math.floor(commitResponse.amount * 0.01); // 1% del total
+          const puntosGanados = Math.floor(commitResponse.amount * 0.01);
 
           const { data: perfil, error: errorPerfil } = await supabaseServerInstance
             .from('perfiles')
@@ -262,26 +260,20 @@ async function startServer() {
             }
           }
 
-          // =========================================================
-          // 📊 INVOCACIÓN DEL MOTOR ANALÍTICO RFM DE SUPABASE
-          // =========================================================
           console.log("7. 📊 Ejecutando motor analítico RFM...");
-          
           const { error: rfmError } = await supabaseServerInstance
             .rpc('actualizar_segmentacion_rfm');
 
           if (rfmError) {
             console.error("⚠️ Error al recalcular la segmentación RFM:", rfmError.message);
           } else {
-            console.log("✅ Segmentación RFM y Categorías recalculadas en tiempo real para la base de datos.");
+            console.log("✅ Segmentación RFM recalculada con éxito.");
           }
-          // =========================================================
 
         } else {
           console.warn("⚠️ No se recibió id_usuario. Los puntos ni el análisis RFM se guardarán.");
         }
 
-        // E. 🧾 CONSTRUCCIÓN DEL OBJETO COMPROBANTE DE COMPRA DINÁMICO
         const fechaChile = new Date().toLocaleString("es-CL", { timeZone: "America/Santiago" });
         const estructuraTicket = {
           buyOrder: commitResponse.buy_order,
@@ -290,14 +282,9 @@ async function startServer() {
           monto: commitResponse.amount
         };
 
-        // F. Gatillar envío automático asíncrono a WhatsApp
         await enviarNotificacionWhatsApp(estructuraTicket);
 
-        // =========================================================================
-        // 🚀 INYECCIÓN: ENVÍO AUTOMÁTICO DE CORREO HTML PREMIUM AL CLIENTE DE PRUEBAS
-        // =========================================================================
         const destinoCorreoCliente = req.body.email_usuario || process.env.CLIENT_TEST_EMAIL || "brian.jovani.g@gmail.com";
-        
         const listaProductosHTML = cartItems && cartItems.length > 0
           ? cartItems.map((p: any) => `<li>${p.quantity || 1}x ${p.name || 'Producto'} - $${(p.price * (p.quantity || 1)).toLocaleString('es-CL')}</li>`).join('')
           : '<li>Detalle de productos en procesamiento por LoyalData</li>';
@@ -322,19 +309,34 @@ async function startServer() {
             </div>
           `,
         }).then(() => {
-          console.log(`📧 [Nodemailer] Notificación enviada con éxito al cliente: ${destinoCorreoCliente}`);
+          console.log(`📧 [Nodemailer] Notificación enviada con éxito al cliente.`);
         }).catch(err => {
-          console.error("❌ [Nodemailer] Error al despachar correo al cliente:", err.message);
+          console.error("❌ [Nodemailer] Error al despachar correo:", err.message);
         });
-        // =========================================================================
 
-        return res.json({ 
-          success: true, 
-          data: estructuraTicket 
-        });
+        return res.json({ success: true, data: estructuraTicket });
 
       } else {
-        console.warn("⚠️ Pago rechazado por Transbank:", commitResponse.response_code);
+        // =========================================================================
+        // 🔥 INTERCEPCIÓN DE FALLO/RECHAZO: INSERTA EN SUPABASE COMO 'Pendiente'
+        // =========================================================================
+        console.warn(`⚠️ Pago rechazado por Transbank (${commitResponse.response_code}). Persistiendo orden...`);
+        
+        const { error: errorSupabasePendiente } = await supabaseServerInstance
+          .from('ventas')
+          .insert([{
+            id_venta: Number(commitResponse.buy_order) || Math.floor(Date.now() / 1000),
+            id_cliente: id_usuario || 'd5e10331-fefd-430c-b1b6-a4e90fffcb43', // Fallback id de pruebas
+            total_venta: commitResponse.amount || 0,
+            estado: 'Pendiente' // Queda visible para gestión administrativa o abandono
+          }]);
+
+        if (errorSupabasePendiente) {
+          console.error("❌ No se pudo inyectar el pedido Pendiente tras rechazo:", errorSupabasePendiente.message);
+        } else {
+          console.log("✨ Intento de compra fallido registrado como 'Pendiente' en Supabase de forma automatizada.");
+        }
+
         return res.json({ success: false, data: commitResponse });
       }
 
@@ -345,13 +347,12 @@ async function startServer() {
   });
 
   // =========================================================================
-  // 📊 ENDPOINT ANALÍTICO - ENTRADA DE KPIs INTEGRADOS (EVITA RLS)
+  // 📊 ENDPOINT ANALÍTICO - ENTRADA DE KPIs INTEGRADOS
   // =========================================================================
   app.get('/api/analitica/dashboard', async (req, res) => {
     try {
       const supabaseServerInstance = getSupabaseServer();
 
-      // 1. Obtener ingresos totales históricos basados en las ventas completadas
       const { data: todasLasVentas, error: errVentas } = await supabaseServerInstance
         .from('ventas')
         .select('total_venta')
@@ -360,7 +361,6 @@ async function startServer() {
       if (errVentas) throw errVentas;
       const totalIngresos = todasLasVentas?.reduce((sum, v) => sum + Number(v.total_venta), 0) || 0;
 
-      // 2. Traer perfiles completos de la DB para evadir el bloqueo de RLS en el front
       const { data: todosLosPerfiles, error: errPerfiles } = await supabaseServerInstance
         .from('perfiles')
         .select('puntos_acumulados, segmento_rfm');
@@ -370,7 +370,6 @@ async function startServer() {
       const totalClientes = todosLosPerfiles?.length || 0;
       const totalPuntos = todosLosPerfiles?.reduce((sum, p) => sum + (p.puntos_acumulados || 0), 0) || 0;
 
-      // 3. Agrupar y mapear dinámicamente la distribución RFM calculada por el motor SQL
       const conteoRFM: Record<string, number> = { 'Campeones': 0, 'Leales': 0, 'En Riesgo': 0, 'Perdidos': 0 };
       todosLosPerfiles?.forEach(p => {
         const seg = p.segmento_rfm || 'Perdidos';
@@ -388,7 +387,6 @@ async function startServer() {
         color: name === 'Campeones' ? '#10b981' : name === 'Leales' ? '#3b82f6' : name === 'En Riesgo' ? '#f97316' : '#ef4444'
       }));
 
-      // 4. Traer el historial transaccional de auditoría reciente usando 'fecha_venta'
       const { data: transaccionesRecientes, error: errHistorial } = await supabaseServerInstance
         .from('ventas')
         .select('id_venta, id_cliente, total_venta, fecha_venta')
@@ -413,7 +411,7 @@ async function startServer() {
   });
 
   // =========================================================================
-  // 🏆 ENDPOINT: ACCIÓN DEL ADMINISTRADOR PARA ENVIAR CUPONES PERSONALIZADOS
+  // 🎁 ENDPOINT: ACCIÓN DEL ADMINISTRADOR PARA ENVIAR CUPONES
   // =========================================================================
   app.post('/api/admin/enviar-cupon', async (req, res) => {
     try {
@@ -432,13 +430,11 @@ async function startServer() {
             <span style="background-color: #f97316; color: white; padding: 6px 14px; border-radius: 9999px; font-size: 12px; font-weight: bold; text-transform: uppercase;">Beneficio Exclusivo</span>
             <h2 style="color: #10b981; margin-top: 20px; font-size: 24px;">¡Felicidades ${nombre_cliente || 'Cliente'}! 🏆</h2>
             <p style="color: #94a3b8; font-size: 16px;">El administrador de MascotaShop te ha otorgado un beneficio especial premium.</p>
-            
             <div style="background-color: #1e293b; padding: 25px; border-radius: 14px; margin: 25px 0; border: 2px dashed #f97316;">
               <p style="margin: 0; color: #94a3b8; font-size: 15px;">Tu cupón de **${descuento || 'Regalo'}** es:</p>
               <h1 style="margin: 12px 0; color: #f97316; letter-spacing: 5px; font-size: 32px;">${codigo_cupon}</h1>
               <p style="margin: 0; color: #64748b; font-size: 12px;">Aplica este código al finalizar tu próximo carrito</p>
             </div>
-            
             <p style="font-size: 11px; color: #475569; margin-top: 20px;">Este beneficio es gestionado directamente por administración.</p>
           </div>
         `,
@@ -458,7 +454,6 @@ async function startServer() {
     app.use(vite.middlewares);
   }
 
-  // --- CONEXIÓN PREVIA A MONGODB ATLAS ---
   try {
     console.log("⏳ Conectando al clúster analítico de MongoDB Atlas...");
     mongoDb = await conectarMongoDB();
@@ -472,7 +467,6 @@ async function startServer() {
   });
 }
 
-// Manejo central de errores no capturados para debugging local
 process.on('uncaughtException', (err) => {
   console.error('❌ Uncaught Exception:', err && err.stack ? err.stack : err);
 });

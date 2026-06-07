@@ -5,8 +5,10 @@ import { formatCLP } from "../lib/utils";
 import { Product } from "../data/products";
 import { supabase } from "../lib/supabaseClient"; 
 
-export interface CartItem extends Product {
+// Extendemos la interfaz para asegurar que TypeScript reconozca el campo stock
+export type CartItem = Product & {
   quantity: number;
+  stock?: number; // 👈 Agregado opcional por si no todas las vistas mapean el stock de inmediato
 }
 
 interface CartDrawerProps {
@@ -15,7 +17,7 @@ interface CartDrawerProps {
   items: CartItem[];
   onUpdateQuantity: (id: string, delta: number) => void;
   onRemove: (id: string) => void;
-  onCheckout: (userId?: string) => Promise<void>; // 👈 MODIFICADO: Permite recibir opcionalmente el userId
+  onCheckout: (userId?: string) => Promise<void>; 
   isProcessing: boolean;           
 }
 
@@ -31,28 +33,36 @@ export default function CartDrawer({
   const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
   // =========================================================================
-  // 🔥 INTERCEPTOR TRANSACCIONAL: ASEGURA EL ID DE USUARIO PARA LOS PUNTOS
+  // 🔥 MANEJADOR DE INCREMENTO CON CONTROL DE STOCK CENTRALIZADO
   // =========================================================================
+  const handleSafeIncrement = (item: CartItem) => {
+    // Si el producto trae stock definido desde Supabase (ej: stock = 3)
+    if (item.stock !== undefined && item.quantity >= item.stock) {
+      alert(`⚠️ Lo sentimos, solo quedan ${item.stock} unidades disponibles de "${item.name}".`);
+      return; // Bloquea la ejecución y no actualiza
+    }
+    
+    // Si hay stock disponible o no está definido, permite sumar 1
+    onUpdateQuantity(item.id, 1);
+  };
+  // =========================================================================
+
   const handleInterceptedCheckout = async () => {
     let currentUserId: string | undefined = undefined;
 
     try {
-      // Capturamos el estado de sesión actual en memoria antes de abandonar el sitio
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         currentUserId = user.id;
-        // Respaldo de seguridad en almacenamiento local
         localStorage.setItem('id_usuario_checkout', user.id);
         console.log("🛡️ ID de usuario asegurado para Webpay:", user.id);
       }
     } catch (error) {
       console.warn("⚠️ No se pudo pre-guardar el ID de usuario:", error);
     } finally {
-      // Ejecutamos el checkout inyectándole el ID del cliente logueado
       await onCheckout(currentUserId);
     }
   };
-  // =========================================================================
 
   return (
     <AnimatePresence>
@@ -95,58 +105,74 @@ export default function CartDrawer({
             {/* Items List */}
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
               {items.length > 0 ? (
-                items.map((item) => (
-                  <div key={item.id} className="flex gap-4 group">
-                    <div className="w-20 h-20 bg-gray-50 rounded-2xl overflow-hidden flex-shrink-0 border border-gray-100">
-                      <img
-                        src={item.image}
-                        alt={item.name}
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start mb-1">
-                        <h3 className="font-bold text-gray-900 text-sm line-clamp-1">
-                          {item.name}
-                        </h3>
-                        <button
-                          onClick={() => onRemove(item.id)}
-                          className="text-gray-300 hover:text-red-500 transition-colors p-1"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                items.map((item) => {
+                  // Validamos si el botón '+' debe salir deshabilitado visualmente
+                  const alcanzóLímiteStock = item.stock !== undefined && item.quantity >= item.stock;
+
+                  return (
+                    <div key={item.id} className="flex gap-4 group">
+                      <div className="w-20 h-20 bg-gray-50 rounded-2xl overflow-hidden flex-shrink-0 border border-gray-100">
+                        <img
+                          src={item.image}
+                          alt={item.name}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
                       </div>
-                      <p className="text-orange-600 font-bold text-sm mb-3">
-                        {formatCLP(item.price)}
-                      </p>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-start mb-1">
+                          <h3 className="font-bold text-gray-900 text-sm line-clamp-1">
+                            {item.name}
+                          </h3>
                           <button
-                            onClick={() => onUpdateQuantity(item.id, -1)}
-                            disabled={item.quantity <= 1 || isProcessing}
-                            className="p-1 hover:bg-white rounded-md disabled:opacity-30 transition-all"
+                            onClick={() => onRemove(item.id)}
+                            className="text-gray-300 hover:text-red-500 transition-colors p-1"
                           >
-                            <Minus className="h-3 w-3" />
-                          </button>
-                          <span className="w-8 text-center text-xs font-bold">
-                            {item.quantity}
-                          </span>
-                          <button
-                            onClick={() => onUpdateQuantity(item.id, 1)}
-                            disabled={isProcessing}
-                            className="p-1 hover:bg-white rounded-md transition-all"
-                          >
-                            <Plus className="h-3 w-3" />
+                            <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
-                        <span className="text-sm font-bold text-gray-900">
-                          {formatCLP(item.price * item.quantity)}
-                        </span>
+                        
+                        {/* Pequeño indicador del stock disponible en tienda */}
+                        {item.stock !== undefined && (
+                          <p className="text-[11px] text-gray-400 mb-1">
+                            Disponibles: <span className="font-bold text-gray-600">{item.stock} u.</span>
+                          </p>
+                        )}
+
+                        <p className="text-orange-600 font-bold text-sm mb-3">
+                          {formatCLP(item.price)}
+                        </p>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                            <button
+                              onClick={() => onUpdateQuantity(item.id, -1)}
+                              disabled={item.quantity <= 1 || isProcessing}
+                              className="p-1 hover:bg-white rounded-md disabled:opacity-30 transition-all"
+                            >
+                              <Minus className="h-3 w-3" />
+                            </button>
+                            <span className="w-8 text-center text-xs font-bold">
+                              {item.quantity}
+                            </span>
+                            
+                            {/* Botón Mas (+) modificado para evaluar el stock o deshabilitarse */}
+                            <button
+                              onClick={() => handleSafeIncrement(item)}
+                              disabled={isProcessing || alcanzóLímiteStock}
+                              className={`p-1 rounded-md transition-all ${alcanzóLímiteStock ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'hover:bg-white text-gray-900'}`}
+                              title={alcanzóLímiteStock ? "Máximo stock alcanzado" : "Añadir unidad"}
+                            >
+                              <Plus className="h-3 w-3" />
+                            </button>
+                          </div>
+                          <span className="text-sm font-bold text-gray-900">
+                            {formatCLP(item.price * item.quantity)}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-center space-y-4">
                   <div className="w-20 h-20 bg-orange-50 rounded-full flex items-center justify-center">
