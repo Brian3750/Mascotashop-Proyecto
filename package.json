@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "generate:clientes": "tsx generate_clientes.ts",
+    "generate:clientes": "tsx generador_clientes.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

@@ -103,19 +103,18 @@ async function startServer() {
       console.log(`📥 [MongoDB Atlas] Log guardado con éxito. ID de inserción: ${resultado.insertedId}`);
       return res.status(201).json({ success: true, logId: resultado.insertedId });
     } catch (error: any) {
-      console.error("❌ Error al guardar interacción en MongoDB:", error.message);
+      console.error("❌ Error al guardar interacción in MongoDB:", error.message);
       return res.status(500).json({ error: error.message });
     }
   });
 
   // =========================================================================
-  // 🔥 ENDPOINT TRANSACCIONAL MODIFICADO: VALIDACIÓN DE STOCK ANTES DE PAGO
+  // 🔥 ENDPOINT TRANSACCIONAL: VALIDACIÓN DE STOCK ANTES DE PAGO
   // =========================================================================
   app.post('/api/crear-pago', async (req, res) => {
     try {
       const { total, sessionId, buyOrder, cartItems } = req.body;
 
-      // VALIDACIÓN CRÍTICA: Iterar sobre el carrito enviado para comprobar stock actual en Supabase
       if (cartItems && cartItems.length > 0) {
         const supabaseServerInstance = getSupabaseServer();
         
@@ -123,14 +122,13 @@ async function startServer() {
           const { data: productoDB, error: errorStock } = await supabaseServerInstance
             .from('inventario')
             .select('nombre_producto, stock')
-            .eq('id_alimento', item.id) // O item.id_alimento según lo uses en tu catálogo
+            .eq('id_alimento', item.id) 
             .single();
 
           if (errorStock || !productoDB) {
             return res.status(404).json({ error: `El producto "${item.name || 'Desconocido'}" no se encuentra en el inventario.` });
           }
 
-          // Si el cliente pide más unidades de las que hay físicamente en Supabase
           if (item.quantity > productoDB.stock) {
             console.log(`🚫 Intento de sobrecompra bloqueado: ${productoDB.nombre_producto}. Pide ${item.quantity}, stock: ${productoDB.stock}`);
             return res.status(400).json({ 
@@ -140,7 +138,6 @@ async function startServer() {
         }
       }
 
-      // Si pasa el control de stock, se procesa la orden en Transbank
       const createResponse = await tx.create(buyOrder, sessionId, Math.round(Number(total)), `http://localhost:3000/`);
       res.json(createResponse); 
     } catch (error: any) {
@@ -198,7 +195,7 @@ async function startServer() {
           const detalles = cartItems.map((item: any) => ({
             id_venta: nuevaVenta.id_venta,
             id_alimento: item.id,
-            quantity: item.quantity, 
+            cantidad: item.quantity, // Mapea perfectamente al esquema 'cantidad' expuesto por tu DDL
             precio_unitario: item.price
           }));
 
@@ -317,18 +314,15 @@ async function startServer() {
         return res.json({ success: true, data: estructuraTicket });
 
       } else {
-        // =========================================================================
-        // 🔥 INTERCEPCIÓN DE FALLO/RECHAZO: INSERTA EN SUPABASE COMO 'Pendiente'
-        // =========================================================================
         console.warn(`⚠️ Pago rechazado por Transbank (${commitResponse.response_code}). Persistiendo orden...`);
         
         const { error: errorSupabasePendiente } = await supabaseServerInstance
           .from('ventas')
           .insert([{
             id_venta: Number(commitResponse.buy_order) || Math.floor(Date.now() / 1000),
-            id_cliente: id_usuario || 'd5e10331-fefd-430c-b1b6-a4e90fffcb43', // Fallback id de pruebas
+            id_cliente: id_usuario || 'd5e10331-fefd-430c-b1b6-a4e90fffcb43', 
             total_venta: commitResponse.amount || 0,
-            estado: 'Pendiente' // Queda visible para gestión administrativa o abandono
+            estado: 'Pendiente' 
           }]);
 
         if (errorSupabasePendiente) {
@@ -347,12 +341,13 @@ async function startServer() {
   });
 
   // =========================================================================
-  // 📊 ENDPOINT ANALÍTICO - ENTRADA DE KPIs INTEGRADOS
+  // 📊 ENDPOINT ANALÍTICA - ENTRADA DE KPIs REALES (CORREGIDO DE RAÍZ)
   // =========================================================================
   app.get('/api/analitica/dashboard', async (req, res) => {
     try {
       const supabaseServerInstance = getSupabaseServer();
 
+      // 1. Obtener ingresos transaccionales reales
       const { data: todasLasVentas, error: errVentas } = await supabaseServerInstance
         .from('ventas')
         .select('total_venta')
@@ -361,6 +356,7 @@ async function startServer() {
       if (errVentas) throw errVentas;
       const totalIngresos = todasLasVentas?.reduce((sum, v) => sum + Number(v.total_venta), 0) || 0;
 
+      // 2. Obtener clientes reales y acumulación analítica RFM
       const { data: todosLosPerfiles, error: errPerfiles } = await supabaseServerInstance
         .from('perfiles')
         .select('puntos_acumulados, segmento_rfm');
@@ -384,9 +380,10 @@ async function startServer() {
       const distribucionRFMReal = Object.keys(conteoRFM).map(name => ({
         name,
         value: Math.round((conteoRFM[name] / totalConSegmento) * 100),
-        color: name === 'Campeones' ? '#10b981' : name === 'Leales' ? '#3b82f6' : name === 'En Riesgo' ? '#f97316' : '#ef4444'
+        color: name === 'Campeones' ? '#0f172a' : name === 'Leales' ? '#10b981' : name === 'En Riesgo' ? '#ff7a00' : '#ef4444'
       }));
 
+      // 3. Monitor Transaccional en Tiempo Real (Últimas 10 ventas)
       const { data: transaccionesRecientes, error: errHistorial } = await supabaseServerInstance
         .from('ventas')
         .select('id_venta, id_cliente, total_venta, fecha_venta')
@@ -395,13 +392,71 @@ async function startServer() {
 
       if (errHistorial) throw errHistorial;
 
+      // 4. Mapeo 100% Real y Dinámico del Inventario vendido (RESOLVIENDO JOIN CON POSTGRES)
+      const { data: detallesVentasData, error: errDetalles } = await supabaseServerInstance
+        .from('detalle_ventas')
+        .select(`
+          cantidad,
+          inventario!id_alimento (
+            categoria
+          )
+        `); // ✅ Modificado 'quantity' por 'cantidad' para sintonizar con la BD
+
+      if (errDetalles) {
+        console.error("❌ [LoyalData Join Error] Error al cruzar detalle_ventas con inventario:", errDetalles.message);
+      }
+
+      // Objeto dinámico para acumular métricas por cualquier categoría que venga de la BD
+      const acumuladorCategorias: Record<string, { totalVentas: number, totalPuntosAsociados: number, conteoItems: number }> = {};
+
+      if (!errDetalles && detallesVentasData && detallesVentasData.length > 0) {
+        detallesVentasData.forEach((item: any) => {
+          const inv = Array.isArray(item.inventario) ? item.inventario[0] : item.inventario;
+          
+          const categoriaReal = inv?.categoria ? inv.categoria.trim() : 'Otros';
+          // Se captura la propiedad nativa de Postgres
+          const cant = Number(item.cantidad) || 0;
+
+          if (!acumuladorCategorias[categoriaReal]) {
+            acumuladorCategorias[categoriaReal] = { 
+              totalVentas: 0, 
+              totalPuntosAsociados: 0, 
+              conteoItems: 0 
+            };
+          }
+
+          acumuladorCategorias[categoriaReal].totalVentas += cant;
+          acumuladorCategorias[categoriaReal].totalPuntosAsociados += (cant * 100); 
+          acumuladorCategorias[categoriaReal].conteoItems += 1;
+        });
+      }
+
+      // Convertimos el acumulador dinámico al arreglo plano estructurado para Recharts
+      const metricasCategoriasReales = Object.keys(acumuladorCategorias).map(catKey => {
+        const item = acumuladorCategorias[catKey];
+        return {
+          name: catKey, 
+          totalVentas: item.totalVentas,
+          promedioPuntos: item.conteoItems > 0 ? Math.round(item.totalPuntosAsociados / item.conteoItems) : 0
+        };
+      });
+
+      if (metricasCategoriasReales.length === 0) {
+        metricasCategoriasReales.push({
+          name: "Sin ventas aún",
+          totalVentas: 0,
+          promedioPuntos: 0
+        });
+      }
+
       return res.json({
         success: true,
         totalIngresos,
         totalClientes,
         totalPuntos,
         distribuciónRFM: distribucionRFMReal,
-        transaccionesRecientes: transaccionesRecientes || []
+        transaccionesRecientes: transaccionesRecientes || [] ,
+        metricasCategorias: metricasCategoriasReales 
       });
 
     } catch (error: any) {

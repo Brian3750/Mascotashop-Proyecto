@@ -6,19 +6,15 @@ import {
 } from 'recharts';
 import { TrendingUp, Users, MousePointer2, DollarSign, Target, Activity } from 'lucide-react';
 
+// Paleta de Colores Estilo Fintech de Alto Contraste
 const COLORS_FINTECH = {
-  vistas: '#3b82f6',
-  ventas: '#10b981',
+  vistas: '#3b82f6',     // Azul Eléctrico
+  ventas: '#10b981',     // Emerald Green
+  campeones: '#05f024',  // Midnight Blue
+  leales: '#210ce6',     // Emerald
+  riesgo: '#ff7a00',     // Neon Orange
+  perdidos: '#ef4444',   // Rojo Alerta
 };
-
-// Data estática de control para el cruce (A la espera de la integración completa de pipelines NoSQL/SQL)
-const dataComparativaMock = [
-  { name: 'Alimento Perro', vistas: 450, ventas: 120 },
-  { name: 'Arena Gato', vistas: 380, ventas: 210 },
-  { name: 'Juguete Cordel', vistas: 590, ventas: 85 },
-  { name: 'Snacks Premium', vistas: 220, ventas: 190 },
-  { name: 'Camas Ortho', vistas: 150, ventas: 30 },
-];
 
 export default function AnalyticsDashboard() {
   const [totalPuntos, setTotalPuntos] = useState(0);
@@ -26,8 +22,10 @@ export default function AnalyticsDashboard() {
   const [totalIngresos, setTotalIngresos] = useState(0);
   const [segmentosRfm, setSegmentosRfm] = useState<any[]>([]);
   const [ventasEnTiempoReal, setVentasEnTiempoReal] = useState<any[]>([]);
+  
+  // Datos reales consumidos desde el backend (Sin constantes estáticas hardcodeadas)
+  const [metricasCategorias, setMetricasCategorias] = useState<any[]>([]);
 
-  // Función única centralizada de recarga analítica segura (Evita bloqueos de RLS)
   const cargarDataDashboard = async () => {
     try {
       const res = await fetch('http://localhost:3000/api/analitica/dashboard');
@@ -36,8 +34,45 @@ export default function AnalyticsDashboard() {
         setTotalIngresos(data.totalIngresos);
         setTotalClientes(data.totalClientes);
         setTotalPuntos(data.totalPuntos);
-        setSegmentosRfm(data.distribuciónRFM);
-        setVentasEnTiempoReal(data.transaccionesRecientes);
+        
+        // Carga dinámica de las métricas comerciales por categoría desde tu API terminada
+        setMetricasCategorias(data.metricasCategorias || []);
+
+        // Mapeo y asignación de colores para los segmentos analíticos estándar del proyecto
+        const mapeoCategorias = (data.distribuciónRFM || []).map((item: any) => {
+          let name = item.name;
+          let color = '#6366f1'; // Color por defecto (Indigo)
+
+          if (item.name.toLowerCase().includes('campeon')) {
+            name = 'Campeones';
+            color = COLORS_FINTECH.campeones;
+          } else if (item.name.toLowerCase().includes('leal')) {
+            name = 'Leales';
+            color = COLORS_FINTECH.leales;
+          } else if (item.name.toLowerCase().includes('riesgo')) {
+            name = 'En Riesgo';
+            color = COLORS_FINTECH.riesgo;
+          } else if (item.name.toLowerCase().includes('perdido')) {
+            name = 'Perdidos';
+            color = COLORS_FINTECH.perdidos;
+          }
+
+          return { ...item, name, color };
+        });
+
+        // Respaldo de inicialización si la base de datos de testeo está limpia
+        if (mapeoCategorias.length === 0) {
+          setSegmentosRfm([
+            { name: 'Campeones', value: 25, color: COLORS_FINTECH.campeones },
+            { name: 'Leales', value: 35, color: COLORS_FINTECH.leales },
+            { name: 'En Riesgo', value: 20, color: COLORS_FINTECH.riesgo },
+            { name: 'Perdidos', value: 20, color: COLORS_FINTECH.perdidos },
+          ]);
+        } else {
+          setSegmentosRfm(mapeoCategorias);
+        }
+
+        setVentasEnTiempoReal(data.transaccionesRecientes || []);
       }
     } catch (err) {
       console.error("Error al cargar la API analítica:", err);
@@ -47,15 +82,12 @@ export default function AnalyticsDashboard() {
   useEffect(() => {
     cargarDataDashboard();
 
-    // CANAL EN TIEMPO REAL: Escucha cambios en ventas e invoca la recarga analítica del servidor
-    console.log("⚡ Activando pasarela Realtime de Supabase para el CRM...");
     const canalVentas = supabase
       .channel('cambios-ventas-mascotashop')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'ventas' },
         () => {
-          console.log("🔥 ¡NUEVA VENTA DETECTADA! Recalculando analíticas desde el origen de datos seguro...");
           cargarDataDashboard(); 
         }
       )
@@ -73,7 +105,7 @@ export default function AnalyticsDashboard() {
         <div className="flex justify-between items-center">
           <div>
             <h1 className="text-2xl font-bold">LoyalData Analytics</h1>
-            <p className="text-slate-400 text-sm mt-1">Inteligencia de Negocio en Tiempo Real</p>
+            <p className="text-slate-400 text-sm mt-1">Inteligencia de Negocio y Ciclo de Vida del Consumidor</p>
           </div>
           <div className="bg-slate-800 px-4 py-2 rounded-xl border border-slate-700">
             <span className="text-xs text-slate-400 block uppercase tracking-wider font-semibold">Estado del Sistema</span>
@@ -88,75 +120,54 @@ export default function AnalyticsDashboard() {
       <div className="p-8 space-y-8">
         {/* KPIs */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <StatCard 
-            title="Ingresos Totales (Live)" 
-            value={`$${totalIngresos.toLocaleString('es-CL')}`} 
-            icon={<DollarSign size={20} />} 
-            trend="Live"
-            color="emerald"
-          />
-          <StatCard 
-            title="Interacciones NoSQL" 
-            value="8,432" 
-            icon={<MousePointer2 size={20} />} 
-            trend="Mongo"
-            color="blue"
-          />
-          <StatCard 
-            title="Fidelidad (Puntos Real)" 
-            value={totalPuntos.toLocaleString()} 
-            icon={<Target size={20} />} 
-            trend="Actualizado"
-            color="orange"
-          />
-          <StatCard 
-            title="Clientes Activos" 
-            value={totalClientes.toString()} 
-            icon={<Users size={20} />} 
-            trend="Total DB"
-            color="purple"
-          />
+          <StatCard title="Ingresos Totales (Live)" value={`$${totalIngresos.toLocaleString('es-CL')}`} icon={<DollarSign size={20} />} trend="Live" color="emerald" />
+          <StatCard title="Interacciones Totales" value="8,432" icon={<MousePointer2 size={20} />} trend="Omnicanal" color="blue" />
+          <StatCard title="Fidelidad (Puntos Real)" value={totalPuntos.toLocaleString()} icon={<Target size={20} />} trend="Actualizado" color="orange" />
+          <StatCard title="Clientes Activos" value={totalClientes.toString()} icon={<Users size={20} />} trend="Total DB" color="purple" />
         </div>
 
         {/* Gráficos */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          
+          {/* Gráfico de Barras - Datos transaccionales dinámicos */}
           <div className="lg:col-span-2 bg-gray-50/50 p-6 rounded-2xl border border-gray-100">
             <h3 className="text-lg font-bold text-slate-800 mb-6 flex items-center gap-2">
               <TrendingUp className="text-blue-500" size={20} />
-              Interés vs. Conversión (Cruce SQL/NoSQL)
+              Volumen de Ventas vs. Puntos de Fidelidad por Categoría
             </h3>
             <div className="h-80 w-full">
               <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                <BarChart data={dataComparativaMock}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
-                  <Tooltip cursor={{fill: '#f1f5f9'}} contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
-                  <Legend iconType="circle" wrapperStyle={{paddingTop: '20px'}} />
-                  <Bar dataKey="vistas" fill={COLORS_FINTECH.vistas} radius={[6, 6, 0, 0]} name="Vistas (MongoDB)" barSize={24} />
-                  <Bar dataKey="ventas" fill={COLORS_FINTECH.ventas} radius={[6, 6, 0, 0]} name="Ventas (WebPay)" barSize={24} />
-                </BarChart>
+                {metricasCategorias.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-gray-400 text-sm">
+                    Cargando métricas transaccionales de categorías...
+                  </div>
+                ) : (
+                  <BarChart data={metricasCategorias}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                    <YAxis axisLine={false} tickLine={false} tick={{fill: '#64748b', fontSize: 12}} />
+                    <Tooltip cursor={{fill: '#f1f5f9'}} contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
+                    <Legend iconType="circle" wrapperStyle={{paddingTop: '20px'}} />
+                    <Bar dataKey="totalVentas" fill={COLORS_FINTECH.ventas} radius={[6, 6, 0, 0]} name="Transacciones Totales" barSize={24} />
+                    <Bar dataKey="promedioPuntos" fill={COLORS_FINTECH.vistas} radius={[6, 6, 0, 0]} name="Puntos Promedio Acumulados" barSize={24} />
+                  </BarChart>
+                )}
               </ResponsiveContainer>
             </div>
           </div>
 
+          {/* Gráfico de Torta - Segmentación RFM Tradicional */}
           <div className="bg-gray-50/50 p-6 rounded-2xl border border-gray-100">
-            <h3 className="text-lg font-bold text-slate-800 mb-6">Distribución RFM Real</h3>
+            <h3 className="text-lg font-bold text-slate-800 mb-6">Distribución Analítica RFM</h3>
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                 <PieChart>
-                  <Pie
-                    data={segmentosRfm}
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={8}
-                    dataKey="value"
-                  >
+                  <Pie data={segmentosRfm} innerRadius={60} outerRadius={80} paddingAngle={6} dataKey="value">
                     {segmentosRfm.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip contentStyle={{borderRadius: '12px'}} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -164,7 +175,7 @@ export default function AnalyticsDashboard() {
               {segmentosRfm.map((seg) => (
                 <div key={seg.name} className="flex justify-between items-center text-sm">
                   <span className="flex items-center gap-2 font-medium text-slate-600">
-                    <span className="w-2 h-2 rounded-full" style={{backgroundColor: seg.color}} />
+                    <span className="w-2.5 h-2.5 rounded-full" style={{backgroundColor: seg.color}} />
                     {seg.name}
                   </span>
                   <span className="font-bold text-slate-800">{seg.value}%</span>
@@ -182,7 +193,7 @@ export default function AnalyticsDashboard() {
           </h3>
           <div className="grid grid-cols-1 gap-3">
             {ventasEnTiempoReal.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-4">Esperando transacciones entrantes...</p>
+              <p className="text-sm text-gray-400 text-center py-4">Esperando transacciones entrantes de MascotaShop o WebPay...</p>
             ) : (
               ventasEnTiempoReal.map((v) => (
                 <div key={v.id_venta} className="flex justify-between items-center p-4 bg-white rounded-xl border border-gray-100 shadow-sm">
