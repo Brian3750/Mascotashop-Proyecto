@@ -10,8 +10,8 @@ import { TrendingUp, Users, MousePointer2, DollarSign, Target, Activity } from '
 const COLORS_FINTECH = {
   vistas: '#3b82f6',     // Azul Eléctrico
   ventas: '#10b981',     // Emerald Green
-  campeones: '#05f024',  // Midnight Blue
-  leales: '#210ce6',     // Emerald
+  campeones: '#05f024',  // Verde Neón
+  leales: '#210ce6',     // Azul Profundo
   riesgo: '#ff7a00',     // Neon Orange
   perdidos: '#ef4444',   // Rojo Alerta
 };
@@ -23,7 +23,7 @@ export default function AnalyticsDashboard() {
   const [segmentosRfm, setSegmentosRfm] = useState<any[]>([]);
   const [ventasEnTiempoReal, setVentasEnTiempoReal] = useState<any[]>([]);
   
-  // Datos reales consumidos desde el backend (Sin constantes estáticas hardcodeadas)
+  // Datos reales consumidos desde el backend
   const [metricasCategorias, setMetricasCategorias] = useState<any[]>([]);
 
   const cargarDataDashboard = async () => {
@@ -31,42 +31,52 @@ export default function AnalyticsDashboard() {
       const res = await fetch('http://localhost:3000/api/analitica/dashboard');
       const data = await res.json();
       if (data.success) {
-        setTotalIngresos(data.totalIngresos);
-        setTotalClientes(data.totalClientes);
-        setTotalPuntos(data.totalPuntos);
+        setTotalIngresos(data.totalIngresos || 0);
+        setTotalClientes(data.totalClientes || 0);
+        setTotalPuntos(data.totalPuntos || 0);
         
-        // Carga dinámica de las métricas comerciales por categoría desde tu API terminada
+        // Carga dinámica de las métricas comerciales por categoría desde tu API
         setMetricasCategorias(data.metricasCategorias || []);
 
-        // Mapeo y asignación de colores para los segmentos analíticos estándar del proyecto
+        // Mapeo y asignación adaptada a las columnas segmento_rfm / categoria_rfm de public.perfiles
         const mapeoCategorias = (data.distribuciónRFM || []).map((item: any) => {
-          let name = item.name;
-          let color = '#6366f1'; // Color por defecto (Indigo)
+          // Captura dinámica: prioriza las columnas exactas de la tabla o el name como fallback
+          const valorSegmento = item.segmento_rfm || item.categoria_rfm || item.name || '';
+          const textoLimpio = valorSegmento.toLowerCase().trim();
+          
+          let name = valorSegmento || 'Sin Segmentar';
+          let color = '#94a3b8'; // Color gris slate por defecto (ej: 'Nuevo Cliente')
 
-          if (item.name.toLowerCase().includes('campeon')) {
+          if (textoLimpio.includes('campeon')) {
             name = 'Campeones';
             color = COLORS_FINTECH.campeones;
-          } else if (item.name.toLowerCase().includes('leal')) {
+          } else if (textoLimpio.includes('leal')) {
             name = 'Leales';
             color = COLORS_FINTECH.leales;
-          } else if (item.name.toLowerCase().includes('riesgo')) {
+          } else if (textoLimpio.includes('riesgo')) {
             name = 'En Riesgo';
             color = COLORS_FINTECH.riesgo;
-          } else if (item.name.toLowerCase().includes('perdido')) {
+          } else if (textoLimpio.includes('perdido')) {
             name = 'Perdidos';
             color = COLORS_FINTECH.perdidos;
           }
 
-          return { ...item, name, color };
+          // Se retorna la estructura exacta extrayendo el conteo (value o count) de la BD
+          return { 
+            name, 
+            value: Number(item.value || item.count || 0), 
+            color 
+          };
         });
 
-        // Respaldo de inicialización si la base de datos de testeo está limpia
+        // Modificado: El respaldo ya no inventa porcentajes ficticios que desconfiguran el CRM, 
+        // respeta la data real viniendo de Supabase.
         if (mapeoCategorias.length === 0) {
           setSegmentosRfm([
-            { name: 'Campeones', value: 25, color: COLORS_FINTECH.campeones },
-            { name: 'Leales', value: 35, color: COLORS_FINTECH.leales },
-            { name: 'En Riesgo', value: 20, color: COLORS_FINTECH.riesgo },
-            { name: 'Perdidos', value: 20, color: COLORS_FINTECH.perdidos },
+            { name: 'Campeones', value: 0, color: COLORS_FINTECH.campeones },
+            { name: 'Leales', value: 0, color: COLORS_FINTECH.leales },
+            { name: 'En Riesgo', value: 0, color: COLORS_FINTECH.riesgo },
+            { name: 'Perdidos', value: 0, color: COLORS_FINTECH.perdidos },
           ]);
         } else {
           setSegmentosRfm(mapeoCategorias);
@@ -156,7 +166,7 @@ export default function AnalyticsDashboard() {
             </div>
           </div>
 
-          {/* Gráfico de Torta - Segmentación RFM Tradicional */}
+          {/* Gráfico de Torta - Segmentación RFM Dinámica */}
           <div className="bg-gray-50/50 p-6 rounded-2xl border border-gray-100">
             <h3 className="text-lg font-bold text-slate-800 mb-6">Distribución Analítica RFM</h3>
             <div className="h-64 w-full">
@@ -178,7 +188,9 @@ export default function AnalyticsDashboard() {
                     <span className="w-2.5 h-2.5 rounded-full" style={{backgroundColor: seg.color}} />
                     {seg.name}
                   </span>
-                  <span className="font-bold text-slate-800">{seg.value}%</span>
+                  <span className="font-bold text-slate-800">
+                    {seg.value} Clientes
+                  </span>
                 </div>
               ))}
             </div>

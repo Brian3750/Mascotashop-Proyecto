@@ -195,7 +195,7 @@ async function startServer() {
           const detalles = cartItems.map((item: any) => ({
             id_venta: nuevaVenta.id_venta,
             id_alimento: item.id,
-            cantidad: item.quantity, // Mapea perfectamente al esquema 'cantidad' expuesto por tu DDL
+            cantidad: item.quantity, 
             precio_unitario: item.price
           }));
 
@@ -366,22 +366,35 @@ async function startServer() {
       const totalClientes = todosLosPerfiles?.length || 0;
       const totalPuntos = todosLosPerfiles?.reduce((sum, p) => sum + (p.puntos_acumulados || 0), 0) || 0;
 
-      const conteoRFM: Record<string, number> = { 'Campeones': 0, 'Leales': 0, 'En Riesgo': 0, 'Perdidos': 0 };
+      // Estructuramos el conteo incluyendo soporte para estados iniciales de tu BD
+      const conteoRFM: Record<string, number> = { 
+        'Campeones': 0, 
+        'Leales': 0, 
+        'En Riesgo': 0, 
+        'Perdidos': 0,
+        'Nuevo Cliente': 0,
+        'Sin Segmentar': 0
+      };
+
       todosLosPerfiles?.forEach(p => {
-        const seg = p.segmento_rfm || 'Perdidos';
+        // Si el segmento viene vacío de la BD caerá en 'Sin Segmentar'
+        const seg = p.segmento_rfm ? p.segmento_rfm.trim() : 'Sin Segmentar';
+        
         if (conteoRFM[seg] !== undefined) {
           conteoRFM[seg]++;
         } else {
-          conteoRFM['Campeones']++;
+          // Fallback dinámico inteligente para evitar agrupar todo erróneamente en Campeones
+          conteoRFM['Sin Segmentar']++;
         }
       });
 
-      const totalConSegmento = todosLosPerfiles?.length || 1;
-      const distribucionRFMReal = Object.keys(conteoRFM).map(name => ({
-        name,
-        value: Math.round((conteoRFM[name] / totalConSegmento) * 100),
-        color: name === 'Campeones' ? '#0f172a' : name === 'Leales' ? '#10b981' : name === 'En Riesgo' ? '#ff7a00' : '#ef4444'
-      }));
+      // Mapeamos a la estructura limpia que espera el Frontend
+      const distribucionRFMReal = Object.keys(conteoRFM)
+        .filter(key => conteoRFM[key] > 0) // Solo enviamos segmentos que tengan clientes reales
+        .map(name => ({
+          name,
+          count: conteoRFM[name] // Enviamos el número entero de clientes
+        }));
 
       // 3. Monitor Transaccional en Tiempo Real (Últimas 10 ventas)
       const { data: transaccionesRecientes, error: errHistorial } = await supabaseServerInstance
@@ -400,13 +413,12 @@ async function startServer() {
           inventario!id_alimento (
             categoria
           )
-        `); // ✅ Modificado 'quantity' por 'cantidad' para sintonizar con la BD
+        `); 
 
       if (errDetalles) {
         console.error("❌ [LoyalData Join Error] Error al cruzar detalle_ventas con inventario:", errDetalles.message);
       }
 
-      // Objeto dinámico para acumular métricas por cualquier categoría que venga de la BD
       const acumuladorCategorias: Record<string, { totalVentas: number, totalPuntosAsociados: number, conteoItems: number }> = {};
 
       if (!errDetalles && detallesVentasData && detallesVentasData.length > 0) {
@@ -414,7 +426,6 @@ async function startServer() {
           const inv = Array.isArray(item.inventario) ? item.inventario[0] : item.inventario;
           
           const categoriaReal = inv?.categoria ? inv.categoria.trim() : 'Otros';
-          // Se captura la propiedad nativa de Postgres
           const cant = Number(item.cantidad) || 0;
 
           if (!acumuladorCategorias[categoriaReal]) {
@@ -431,7 +442,6 @@ async function startServer() {
         });
       }
 
-      // Convertimos el acumulador dinámico al arreglo plano estructurado para Recharts
       const metricasCategoriasReales = Object.keys(acumuladorCategorias).map(catKey => {
         const item = acumuladorCategorias[catKey];
         return {
@@ -500,6 +510,146 @@ async function startServer() {
 
     } catch (error: any) {
       console.error("❌ Error al enviar cupón desde el panel:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // =========================================================================
+  // 📊 ENDPOINT ESTADÍSTICAS DE USUARIO - COMPRAS Y CLICKS
+  // =========================================================================
+  app.get('/api/usuario/estadisticas', async (req, res) => {
+    try {
+      const { id_usuario } = req.query;
+
+      if (!id_usuario) {
+        return res.status(400).json({ error: "Se requiere id_usuario" });
+      }
+
+      const supabaseServerInstance = getSupabaseServer();
+
+      // 1. Obtener el número de compras (ventas completadas)
+      const { data: ventasData, error: errorVentas } = await supabaseServerInstance
+        .from('ventas')
+        .select('id_venta', { count: 'exact', head: false })
+        .eq('id_cliente', id_usuario)
+        .eq('estado', 'completado');
+
+      const totalCompras = ventasData?.length || 0;
+
+      // 2. Obtener el número de clicks (interacciones en MongoDB)
+      let totalClicks = 0;
+      try {
+        if (!mongoDb) {
+          console.warn("⚠️ MongoDB no se encuentra inicializado en estadísticas.");
+          mongoDb = await conectarMongoDB();
+        }
+
+        const logsCollection = mongoDb.collection("Logs_Comportamiento_RFM");
+        totalClicks = await logsCollection.countDocuments({ id_usuario: id_usuario });
+      } catch (mongoError: any) {
+        console.warn("⚠️ Error al conectar MongoDB para contar clicks:", mongoError.message);
+        totalClicks = 0;
+      }
+
+      return res.json({
+        success: true,
+        totalCompras: totalCompras,
+        totalClicks: totalClicks
+      });
+    } catch (error: any) {
+      console.error("❌ Error al obtener estadísticas del usuario:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // =========================================================================
+  // 📋 ENDPOINT DETALLE DE COMPRAS DEL USUARIO
+  // =========================================================================
+  app.get('/api/usuario/compras', async (req, res) => {
+    try {
+      const { id_usuario } = req.query;
+
+      if (!id_usuario) {
+        return res.status(400).json({ error: "Se requiere id_usuario" });
+      }
+
+      const supabaseServerInstance = getSupabaseServer();
+
+      // Obtener compras detalladas
+      const { data: ventasData, error: errorVentas } = await supabaseServerInstance
+        .from('ventas')
+        .select(`
+          id_venta,
+          total_venta,
+          fecha_venta,
+          detalle_ventas(cantidad)
+        `)
+        .eq('id_cliente', id_usuario)
+        .eq('estado', 'completado')
+        .order('fecha_venta', { ascending: false });
+
+      if (errorVentas) {
+        console.error("❌ Error al obtener compras:", errorVentas.message);
+        return res.status(500).json({ error: errorVentas.message });
+      }
+
+      const compras = (ventasData || []).map((venta: any) => ({
+        id_venta: venta.id_venta,
+        total_venta: venta.total_venta,
+        fecha_venta: venta.fecha_venta,
+        cantidad_items: (venta.detalle_ventas || []).reduce((sum: number, det: any) => sum + (det.cantidad || 0), 0)
+      }));
+
+      return res.json({
+        success: true,
+        compras: compras
+      });
+    } catch (error: any) {
+      console.error("❌ Error al obtener detalle de compras:", error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // =========================================================================
+  // 👆 ENDPOINT DETALLE DE CLICKS/INTERACCIONES DEL USUARIO
+  // =========================================================================
+  app.get('/api/usuario/clicks', async (req, res) => {
+    try {
+      const { id_usuario } = req.query;
+
+      if (!id_usuario) {
+        return res.status(400).json({ error: "Se requiere id_usuario" });
+      }
+
+      let clicks: any[] = [];
+      try {
+        if (!mongoDb) {
+          console.warn("⚠️ MongoDB no se encuentra inicializado en clicks.");
+          mongoDb = await conectarMongoDB();
+        }
+
+        const logsCollection = mongoDb.collection("Logs_Comportamiento_RFM");
+        const logsData = await logsCollection
+          .find({ id_usuario: id_usuario })
+          .sort({ timestamp: -1 })
+          .limit(50)
+          .toArray();
+
+        clicks = logsData.map((log: any) => ({
+          evento: log.evento,
+          nombre_producto: log.detalles?.nombre || "Producto desconocido",
+          timestamp: log.timestamp
+        }));
+      } catch (mongoError: any) {
+        console.warn("⚠️ Error al conectar MongoDB para obtener clicks:", mongoError.message);
+      }
+
+      return res.json({
+        success: true,
+        clicks: clicks
+      });
+    } catch (error: any) {
+      console.error("❌ Error al obtener detalle de clicks:", error.message);
       return res.status(500).json({ error: error.message });
     }
   });

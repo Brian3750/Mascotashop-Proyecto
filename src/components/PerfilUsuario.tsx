@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { User, Loader, Award } from 'lucide-react';
+import { User, Loader, Award, ShoppingCart, MousePointer2, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface Mascota {
   id_mascota: number;
@@ -14,9 +14,24 @@ interface UserInfo {
   id: string;
   email: string;
   puntos_acumulados: number;
+  total_compras: number;
+  total_clicks: number;
   user_metadata?: {
     full_name?: string;
   };
+}
+
+interface Compra {
+  id_venta: number;
+  total_venta: number;
+  fecha_venta: string;
+  cantidad_items: number;
+}
+
+interface Click {
+  evento: string;
+  nombre_producto: string;
+  timestamp: string;
 }
 
 export default function PerfilUsuario() {
@@ -24,10 +39,66 @@ export default function PerfilUsuario() {
   const [mascotas, setMascotas] = useState<Mascota[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expandedCompras, setExpandedCompras] = useState(false);
+  const [expandedClicks, setExpandedClicks] = useState(false);
+  const [compras, setCompras] = useState<Compra[]>([]);
+  const [clicks, setClicks] = useState<Click[]>([]);
+  const [loadingCompras, setLoadingCompras] = useState(false);
+  const [loadingClicks, setLoadingClicks] = useState(false);
 
   useEffect(() => {
     loadProfileData();
   }, []);
+
+  const loadCompras = async () => {
+    if (!userInfo) return;
+    setLoadingCompras(true);
+    try {
+      const respuesta = await fetch(
+        `http://localhost:3000/api/usuario/compras?id_usuario=${userInfo.id}`
+      );
+      if (respuesta.ok) {
+        const datos = await respuesta.json();
+        setCompras(datos.compras || []);
+      }
+    } catch (err: any) {
+      console.warn('⚠️ Error cargando compras:', err.message);
+    } finally {
+      setLoadingCompras(false);
+    }
+  };
+
+  const loadClicks = async () => {
+    if (!userInfo) return;
+    setLoadingClicks(true);
+    try {
+      const respuesta = await fetch(
+        `http://localhost:3000/api/usuario/clicks?id_usuario=${userInfo.id}`
+      );
+      if (respuesta.ok) {
+        const datos = await respuesta.json();
+        setClicks(datos.clicks || []);
+      }
+    } catch (err: any) {
+      console.warn('⚠️ Error cargando clicks:', err.message);
+    } finally {
+      setLoadingClicks(false);
+    }
+  };
+
+  const toggleCompras = () => {
+    if (!expandedCompras && compras.length === 0) {
+      loadCompras();
+    }
+    setExpandedCompras(!expandedCompras);
+  };
+
+  const toggleClicks = () => {
+    if (!expandedClicks && clicks.length === 0) {
+      loadClicks();
+    }
+    setExpandedClicks(!expandedClicks);
+  };
 
   const loadProfileData = async () => {
     try {
@@ -54,14 +125,32 @@ export default function PerfilUsuario() {
         console.error('❌ Error cargando puntos del perfil:', perfilError.message);
       }
 
+      // 3. Obtener estadísticas (compras y clicks)
+      let totalCompras = 0;
+      let totalClicks = 0;
+      try {
+        const respuestaEstadisticas = await fetch(
+          `http://localhost:3000/api/usuario/estadisticas?id_usuario=${user.id}`
+        );
+        if (respuestaEstadisticas.ok) {
+          const datosEstadisticas = await respuestaEstadisticas.json();
+          totalCompras = datosEstadisticas.totalCompras || 0;
+          totalClicks = datosEstadisticas.totalClicks || 0;
+        }
+      } catch (err: any) {
+        console.warn('⚠️ Error cargando estadísticas:', err.message);
+      }
+
       setUserInfo({
         id: user.id,
         email: user.email || '',
         user_metadata: user.user_metadata,
         puntos_acumulados: perfilData?.puntos_acumulados ?? 0,
+        total_compras: totalCompras,
+        total_clicks: totalClicks,
       });
 
-      // 3. Obtener el listado de mascotas con sus relaciones
+      // 4. Obtener el listado de mascotas con sus relaciones
       const { data: { user: currentUser } } = await supabase.auth.getUser();
       const { data: mascotasData, error: mascotasError } = await supabase
         .from('mascotas')
@@ -106,10 +195,10 @@ export default function PerfilUsuario() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-12">
       
-      {/* SECCIÓN SUPERIOR: Info Usuario & Tarjeta de Puntos */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      {/* SECCIÓN SUPERIOR: Info Usuario & Tarjetas de Métricas */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         
-        {/* Info Básica del Usuario */}
+        {/* Info Básica del Usuario - Ocupa 2 espacios */}
         <div className="md:col-span-2 bg-white p-8 rounded-3xl shadow-xl border border-gray-100 flex items-center gap-4">
           <div className="bg-orange-100 p-4 rounded-2xl flex-shrink-0">
             <User className="text-orange-500 h-8 w-8" />
@@ -123,13 +212,13 @@ export default function PerfilUsuario() {
           </div>
         </div>
 
-        {/* Tarjeta de Puntos Acumulados (Fidelización) */}
+        {/* Tarjeta de Puntos Acumulados */}
         <div className="bg-gradient-to-br from-orange-500 to-amber-600 p-6 rounded-3xl shadow-xl text-white flex flex-col justify-between relative overflow-hidden">
           <div className="absolute -right-8 -bottom-8 bg-white/10 w-32 h-32 rounded-full blur-xl pointer-events-none"></div>
           
           <div className="flex items-center justify-between">
             <span className="text-xs font-black uppercase tracking-wider bg-white/20 px-3 py-1 rounded-full">
-              Club Mascotas
+              Fidelización
             </span>
             <Award className="text-orange-100 h-6 w-6 opacity-90" />
           </div>
@@ -144,11 +233,174 @@ export default function PerfilUsuario() {
           </div>
         </div>
 
+        {/* Tarjeta de Compras */}
+        <div 
+          onClick={toggleCompras}
+          className="bg-gradient-to-br from-green-500 to-emerald-600 p-6 rounded-3xl shadow-xl text-white flex flex-col justify-between relative overflow-hidden cursor-pointer hover:shadow-2xl transition-all"
+        >
+          <div className="absolute -right-8 -bottom-8 bg-white/10 w-32 h-32 rounded-full blur-xl pointer-events-none"></div>
+          
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-black uppercase tracking-wider bg-white/20 px-3 py-1 rounded-full">
+              Compras
+            </span>
+            <div className="flex items-center gap-2">
+              <ShoppingCart className="text-green-100 h-6 w-6 opacity-90" />
+              {expandedCompras ? (
+                <ChevronUp className="h-5 w-5" />
+              ) : (
+                <ChevronDown className="h-5 w-5" />
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <span className="block text-3xl font-black italic tracking-tight">
+              {userInfo?.total_compras.toLocaleString('es-CL')}
+            </span>
+            <span className="text-xs text-green-100 font-medium">
+              Compras realizadas
+            </span>
+          </div>
+        </div>
+
+        {/* Tarjeta de Clicks */}
+        <div 
+          onClick={toggleClicks}
+          className="bg-gradient-to-br from-purple-500 to-violet-600 p-6 rounded-3xl shadow-xl text-white flex flex-col justify-between relative overflow-hidden cursor-pointer hover:shadow-2xl transition-all"
+        >
+          <div className="absolute -right-8 -bottom-8 bg-white/10 w-32 h-32 rounded-full blur-xl pointer-events-none"></div>
+          
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-black uppercase tracking-wider bg-white/20 px-3 py-1 rounded-full">
+              Interacción
+            </span>
+            <div className="flex items-center gap-2">
+              <MousePointer2 className="text-purple-100 h-6 w-6 opacity-90" />
+              {expandedClicks ? (
+                <ChevronUp className="h-5 w-5" />
+              ) : (
+                <ChevronDown className="h-5 w-5" />
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <span className="block text-3xl font-black italic tracking-tight">
+              {userInfo?.total_clicks.toLocaleString('es-CL')}
+            </span>
+            <span className="text-xs text-purple-100 font-medium">
+              Clicks realizados
+            </span>
+          </div>
+        </div>
+
       </div>
 
       {error && (
         <div className="bg-red-50 border border-red-200 p-4 rounded-2xl text-red-600 mb-8">
           {error}
+        </div>
+      )}
+
+      {/* SECCIÓN DESPLEGABLE: Detalle de Compras */}
+      {expandedCompras && (
+        <div className="bg-green-50 border-2 border-green-300 p-6 rounded-3xl shadow-lg mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-gray-800 italic flex items-center gap-2">
+              🛒 Detalle de Compras
+            </h3>
+            <button
+              onClick={toggleCompras}
+              className="text-green-600 hover:text-green-700 transition"
+            >
+              <ChevronUp className="h-6 w-6" />
+            </button>
+          </div>
+
+          {loadingCompras ? (
+            <div className="flex justify-center py-8">
+              <Loader className="animate-spin text-green-500 h-8 w-8" />
+            </div>
+          ) : compras.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-gray-400">No tienes compras registradas aún.</p>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[400px] overflow-y-auto">
+              {compras.map((compra, index) => (
+                <div 
+                  key={index}
+                  className="bg-white p-4 rounded-xl border border-green-200 hover:shadow-md transition"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <p className="font-bold text-gray-800">Orden #{compra.id_venta}</p>
+                      <p className="text-sm text-gray-600">
+                        {new Date(compra.fecha_venta).toLocaleDateString('es-CL')}
+                      </p>
+                      <p className="text-xs text-green-600 font-semibold mt-1">
+                        {compra.cantidad_items} {compra.cantidad_items === 1 ? 'artículo' : 'artículos'}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-black text-green-600">
+                        ${compra.total_venta.toLocaleString('es-CL')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SECCIÓN DESPLEGABLE: Detalle de Clicks */}
+      {expandedClicks && (
+        <div className="bg-purple-50 border-2 border-purple-300 p-6 rounded-3xl shadow-lg mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-gray-800 italic flex items-center gap-2">
+              👆 Detalle de Interacciones
+            </h3>
+            <button
+              onClick={toggleClicks}
+              className="text-purple-600 hover:text-purple-700 transition"
+            >
+              <ChevronUp className="h-6 w-6" />
+            </button>
+          </div>
+
+          {loadingClicks ? (
+            <div className="flex justify-center py-8">
+              <Loader className="animate-spin text-purple-500 h-8 w-8" />
+            </div>
+          ) : clicks.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-gray-400">No tienes interacciones registradas aún.</p>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[400px] overflow-y-auto">
+              {clicks.map((click, index) => (
+                <div 
+                  key={index}
+                  className="bg-white p-4 rounded-xl border border-purple-200 hover:shadow-md transition"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <p className="font-bold text-gray-800">{click.nombre_producto}</p>
+                      <p className="text-sm text-purple-600 font-semibold capitalize mt-1">
+                        {click.evento.replace(/_/g, ' ')}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {new Date(click.timestamp).toLocaleDateString('es-CL')} - {new Date(click.timestamp).toLocaleTimeString('es-CL')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
