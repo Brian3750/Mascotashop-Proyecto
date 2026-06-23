@@ -32,11 +32,19 @@ export default function AdminPanel() {
   });
 
   // 🚀 ESTADOS PARA EL DISPARADOR DINÁMICO DE CUPONES
+  const generarCodigoCupon = () => {
+    const prefijos = ['VIP', 'MASC', 'LOYAL', 'PET', 'FIEL'];
+    const prefijo = prefijos[Math.floor(Math.random() * prefijos.length)];
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const aleatorio = Math.random().toString(36).substring(2, 5).toUpperCase();
+    return `${prefijo}-${timestamp}-${aleatorio}`;
+  };
+
   const [couponForm, setCouponForm] = useState({
     correo_cliente: '',
     nombre_cliente: '',
     telefono_cliente: '', 
-    codigo_cupon: 'VIP-MASC-2026',
+    codigo_cupon: generarCodigoCupon(),
     descuento: '20% DE DESCUENTO'
   });
   const [sendingCoupon, setSendingCoupon] = useState(false);
@@ -282,7 +290,7 @@ export default function AdminPanel() {
       const resData = await response.json();
       if (response.ok && resData.success) {
         alert(`✨ Cupón enviado con éxito a: ${couponForm.correo_cliente}`);
-        setCouponForm({ ...couponForm, correo_cliente: '', nombre_cliente: '', telefono_cliente: '' });
+        setCouponForm({ ...couponForm, correo_cliente: '', nombre_cliente: '', telefono_cliente: '', codigo_cupon: generarCodigoCupon() });
       } else {
         alert(`⚠️ Servidor respondió con error: ${resData.error || 'No se pudo despachar.'}`);
       }
@@ -477,13 +485,23 @@ export default function AdminPanel() {
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[11px] font-bold text-slate-500 uppercase">Código Cupón</label>
-                    <input 
-                      type="text" 
-                      value={couponForm.codigo_cupon}
-                      onChange={e => setCouponForm({...couponForm, codigo_cupon: e.target.value})}
-                      className="rounded-xl border border-slate-200 p-2.5 text-xs bg-slate-50 outline-none focus:border-orange-500 font-mono"
-                      required
-                    />
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        value={couponForm.codigo_cupon}
+                        onChange={e => setCouponForm({...couponForm, codigo_cupon: e.target.value})}
+                        className="flex-1 rounded-xl border border-slate-200 p-2.5 text-xs bg-slate-50 outline-none focus:border-orange-500 font-mono"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setCouponForm({...couponForm, codigo_cupon: generarCodigoCupon()})}
+                        title="Generar nuevo código"
+                        className="px-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-orange-50 hover:border-orange-400 text-slate-500 hover:text-orange-600 transition text-sm"
+                      >
+                        🔄
+                      </button>
+                    </div>
                   </div>
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[11px] font-bold text-slate-500 uppercase">Glosa Descuento</label>

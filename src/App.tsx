@@ -3,6 +3,8 @@ import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
 import LoginModal from "./components/LoginModal";
 import CartDrawer, { CartItem } from "./components/CartDrawer";
+
+const API = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 import RegistroMascota from './components/RegistroMascota'; 
 import UserProfile from './components/PerfilUsuario';
 import TicketPago from "./components/TicketPago"; 
@@ -169,16 +171,18 @@ export default function App() {
     try {
       const pendingCart = JSON.parse(localStorage.getItem('pending_cart') || '[]');
       const savedUserId = localStorage.getItem('id_usuario_checkout');
+      const savedCuponId = localStorage.getItem('id_cupon_aplicado');
 
       console.log("🔍 Validando token con Transbank...", token);
       
-      const response = await fetch('http://localhost:3000/api/confirmar-pago', {
+      const response = await fetch(`${API}/api/confirmar-pago`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           token,
           cartItems: pendingCart,
-          id_usuario: savedUserId 
+          id_usuario: savedUserId,
+          id_cupon_aplicado: savedCuponId || undefined
         })
       });
       
@@ -199,6 +203,7 @@ export default function App() {
         setCartItems([]);
         localStorage.removeItem('pending_cart');
         localStorage.removeItem('id_usuario_checkout');
+        localStorage.removeItem('id_cupon_aplicado');
         
         setPagoValidadoExitoso(true);
         fetchProducts();
@@ -261,7 +266,7 @@ export default function App() {
     setIsAdmin(false); 
   };
 
-  const handleCheckout = async (userId?: string) => {
+  const handleCheckout = async (userId?: string, codigoCupon?: string) => {
     if (cartItems.length === 0) return;
     if (!session) {
       setIsCartOpen(false); 
@@ -271,27 +276,32 @@ export default function App() {
 
     setIsProcessing(true);
     try {
-      const totalVenta = Math.round(cartItems.reduce((acc, item) => acc + (item.price * item.quantity), 0));
       const buyOrder = `ORD-${Date.now()}`;
       const finalUserId = userId || session.user.id;
 
-      const response = await fetch('http://localhost:3000/api/crear-pago', {
+      const response = await fetch(`${API}/api/crear-pago`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           buyOrder: buyOrder,
-          sessionId: finalUserId, 
-          total: totalVenta
+          sessionId: finalUserId,
+          cartItems: cartItems.map(item => ({ id: item.id, name: item.name, quantity: item.quantity })),
+          codigoCupon: codigoCupon || undefined
         })
       });
 
-      if (!response.ok) throw new Error("Error en el servidor al contactar con Transbank");
-
       const data = await response.json();
+
+      if (!response.ok) throw new Error(data.error || "Error en el servidor al contactar con Transbank");
 
       if (data.url && data.token) {
         localStorage.setItem('pending_cart', JSON.stringify(cartItems));
         localStorage.setItem('id_usuario_checkout', finalUserId);
+        if (data.id_cupon_aplicado) {
+          localStorage.setItem('id_cupon_aplicado', String(data.id_cupon_aplicado));
+        } else {
+          localStorage.removeItem('id_cupon_aplicado');
+        }
         console.log("🛡️ Contexto de venta respaldado de forma segura localmente.");
         
         const form = document.createElement('form');

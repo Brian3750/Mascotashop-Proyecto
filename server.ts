@@ -113,33 +113,79 @@ async function startServer() {
   // =========================================================================
   app.post('/api/crear-pago', async (req, res) => {
     try {
-      const { total, sessionId, buyOrder, cartItems } = req.body;
+      const { sessionId, buyOrder, cartItems, codigoCupon } = req.body;
 
-      if (cartItems && cartItems.length > 0) {
-        const supabaseServerInstance = getSupabaseServer();
-        
-        for (const item of cartItems) {
-          const { data: productoDB, error: errorStock } = await supabaseServerInstance
-            .from('inventario')
-            .select('nombre_producto, stock')
-            .eq('id_alimento', item.id) 
-            .single();
-
-          if (errorStock || !productoDB) {
-            return res.status(404).json({ error: `El producto "${item.name || 'Desconocido'}" no se encuentra en el inventario.` });
-          }
-
-          if (item.quantity > productoDB.stock) {
-            console.log(`🚫 Intento de sobrecompra bloqueado: ${productoDB.nombre_producto}. Pide ${item.quantity}, stock: ${productoDB.stock}`);
-            return res.status(400).json({ 
-              error: `¡Stock insuficiente para ${productoDB.nombre_producto}! Solo quedan ${productoDB.stock} unidades en la sucursal y has intentado llevar ${item.quantity}.` 
-            });
-          }
-        }
+      if (!cartItems || cartItems.length === 0) {
+        return res.status(400).json({ error: "El carrito está vacío." });
       }
 
-      const createResponse = await tx.create(buyOrder, sessionId, Math.round(Number(total)), `http://localhost:3000/`);
-      res.json(createResponse); 
+      const supabaseServerInstance = getSupabaseServer();
+
+      // 1. Recalcular el total desde los precios reales en Supabase
+      //    (nunca se confía en el total que manda el navegador).
+      let totalReal = 0;
+
+      for (const item of cartItems) {
+        const { data: productoDB, error: errorStock } = await supabaseServerInstance
+          .from('inventario')
+          .select('nombre_producto, stock, precio_venta')
+          .eq('id_alimento', item.id)
+          .single();
+
+        if (errorStock || !productoDB) {
+          return res.status(404).json({ error: `El producto "${item.name || 'Desconocido'}" no se encuentra en el inventario.` });
+        }
+
+        if (item.quantity > productoDB.stock) {
+          console.log(`🚫 Intento de sobrecompra bloqueado: ${productoDB.nombre_producto}. Pide ${item.quantity}, stock: ${productoDB.stock}`);
+          return res.status(400).json({
+            error: `¡Stock insuficiente para ${productoDB.nombre_producto}! Solo quedan ${productoDB.stock} unidades en la sucursal y has intentado llevar ${item.quantity}.`
+          });
+        }
+
+        totalReal += Number(productoDB.precio_venta) * item.quantity;
+      }
+
+      // 2. Validar el cupón (si vino uno) y aplicar el descuento sobre el total real
+      let cuponValidado: any = null;
+
+      if (codigoCupon) {
+        const { data: cupon, error: errorCupon } = await supabaseServerInstance
+          .from('cupones')
+          .select('id_cupon, codigo, id_cliente, descuento_tipo, descuento_valor, usado, fecha_expiracion')
+          .eq('codigo', codigoCupon)
+          .single();
+
+        if (errorCupon || !cupon) {
+          return res.status(400).json({ error: "El código de cupón no existe." });
+        }
+        if (cupon.usado) {
+          return res.status(400).json({ error: "Este cupón ya fue utilizado." });
+        }
+        if (cupon.fecha_expiracion && new Date(cupon.fecha_expiracion) < new Date()) {
+          return res.status(400).json({ error: "Este cupón se encuentra vencido." });
+        }
+        // Si el cupón fue emitido para un cliente específico, solo ese cliente puede usarlo
+        if (cupon.id_cliente && cupon.id_cliente !== sessionId) {
+          return res.status(400).json({ error: "Este cupón no está disponible para esta cuenta." });
+        }
+
+        cuponValidado = cupon;
+
+        if (cupon.descuento_tipo === 'porcentaje') {
+          totalReal = totalReal * (1 - Number(cupon.descuento_valor) / 100);
+        } else {
+          totalReal = totalReal - Number(cupon.descuento_valor);
+        }
+        if (totalReal < 0) totalReal = 0;
+      }
+
+      const totalFinal = Math.round(totalReal);
+
+      const createResponse = await tx.create(buyOrder, sessionId, totalFinal, `http://localhost:3000/`);
+      // Devolvemos también el id del cupón validado para que el frontend lo reenvíe
+      // al confirmar el pago (así sabemos cuál marcar como usado).
+      res.json({ ...createResponse, id_cupon_aplicado: cuponValidado?.id_cupon || null });
     } catch (error: any) {
       console.error("❌ Error Webpay Create:", error.message);
       res.status(500).json({ error: 'Error al crear transacción' });
@@ -160,7 +206,7 @@ async function startServer() {
   // 🧾 ENDPOINT DE CONFIRMACIÓN DE PAGO - TRANSBANK & PERSISTENCIA RECHAZADA
   // =========================================================================
   app.post('/api/confirmar-pago', async (req, res) => {
-    const { cartItems, id_usuario } = req.body;
+    const { cartItems, id_usuario, id_cupon_aplicado } = req.body;
     const token = req.body.token || req.body.token_ws;
     if (!token) return res.status(400).json({ error: "Token no recibido" });
 
@@ -190,6 +236,20 @@ async function startServer() {
 
         const nuevaVenta = ventaData[0];
         console.log(`3. ✨ Venta ${nuevaVenta.id_venta} creada.`);
+
+        if (id_cupon_aplicado) {
+          const { error: errorMarcarCupon } = await supabaseServerInstance
+            .from('cupones')
+            .update({ usado: true, id_venta_uso: nuevaVenta.id_venta })
+            .eq('id_cupon', id_cupon_aplicado)
+            .eq('usado', false); // evita marcar dos veces el mismo cupón en una carrera
+
+          if (errorMarcarCupon) {
+            console.error(`⚠️ No se pudo marcar el cupón ${id_cupon_aplicado} como usado:`, errorMarcarCupon.message);
+          } else {
+            console.log(`🎟️ Cupón ${id_cupon_aplicado} marcado como usado.`);
+          }
+        }
 
         if (cartItems && cartItems.length > 0) {
           const detalles = cartItems.map((item: any) => ({
@@ -254,6 +314,21 @@ async function startServer() {
               console.error(`❌ Error al guardar puntos para usuario ${id_usuario}:`, errorPuntos.message);
             } else {
               console.log(`✅ Puntos guardados: +${puntosGanados} puntos. Total: ${nuevosPuntos} puntos`);
+
+              // Registrar el movimiento en el historial (auditoría/trazabilidad)
+              const { error: errorHistorial } = await supabaseServerInstance
+                .from('historial_puntos')
+                .insert([{
+                  id_cliente: id_usuario,
+                  tipo_movimiento: 'Ganados',
+                  puntos: puntosGanados,
+                  id_venta: nuevaVenta.id_venta,
+                  descripcion: `Puntos por compra #${nuevaVenta.id_venta}`
+                }]);
+
+              if (errorHistorial) {
+                console.error(`⚠️ No se pudo registrar el historial de puntos:`, errorHistorial.message);
+              }
             }
           }
 
@@ -341,106 +416,164 @@ async function startServer() {
   });
 
   // =========================================================================
-  // 📊 ENDPOINT ANALÍTICA - ENTRADA DE KPIs REALES (CORREGIDO DE RAÍZ)
+  // 📊 ENDPOINT ANALÍTICA - CON FILTROS DINÁMICOS REACTIVOS
   // =========================================================================
   app.get('/api/analitica/dashboard', async (req, res) => {
     try {
       const supabaseServerInstance = getSupabaseServer();
 
-      // 1. Obtener ingresos transaccionales reales
-      const { data: todasLasVentas, error: errVentas } = await supabaseServerInstance
+      // 1. CAPTURAR FILTROS ENVIADOS DESDE EL FRONTEND
+      const { clienteId, animal, segmento } = req.query;
+
+      // 2. OBTENER LISTA DE CLIENTES REALES PARA EL DROP DOWN SELECTOR
+      const { data: perfilesDropdown } = await supabaseServerInstance
+        .from('perfiles')
+        .select('id, nombres, apellidos');
+
+      const listaClientes = (perfilesDropdown || []).map(c => ({
+        id: c.id,
+        nombre: `${c.nombres || ''} ${c.apellidos || ''}`.trim() || 'Cliente Sin Identificar'
+      }));
+
+      // 3. TRAER INGRESOS TRANSACCIONALES FILTRADOS POR CLIENTE
+      let queryVentas = supabaseServerInstance
         .from('ventas')
-        .select('total_venta')
+        .select('id_venta, id_cliente, total_venta, fecha_venta')
         .eq('estado', 'completado');
 
+      if (clienteId && clienteId !== 'Todos') {
+        queryVentas = queryVentas.eq('id_cliente', clienteId);
+      }
+
+      const { data: todasLasVentas, error: errVentas } = await queryVentas;
       if (errVentas) throw errVentas;
+
       const totalIngresos = todasLasVentas?.reduce((sum, v) => sum + Number(v.total_venta), 0) || 0;
 
-      // 2. Obtener clientes reales y acumulación analítica RFM
-      const { data: todosLosPerfiles, error: errPerfiles } = await supabaseServerInstance
-        .from('perfiles')
-        .select('puntos_acumulados, segmento_rfm');
+      // Monitor Transaccional: últimas 10 ventas enriquecidas con segmento_rfm del cliente
+      const ultimasVentas = todasLasVentas ? todasLasVentas.slice(0, 10) : [];
 
+      const idsClientes = [...new Set(ultimasVentas.map((v: any) => v.id_cliente).filter(Boolean))];
+      let mapaSegmentos: Record<string, string> = {};
+
+      if (idsClientes.length > 0) {
+        const { data: perfilesRFM } = await supabaseServerInstance
+          .from('perfiles')
+          .select('id, segmento_rfm')
+          .in('id', idsClientes);
+
+        mapaSegmentos = Object.fromEntries(
+          (perfilesRFM || []).map((p: any) => [p.id, p.segmento_rfm || 'Sin Segmentar'])
+        );
+      }
+
+      const transaccionesRecientes = ultimasVentas.map((v: any) => ({
+        ...v,
+        segmento_rfm: mapaSegmentos[v.id_cliente] || null,
+      }));
+
+      // 4. OBTENER CLIENTES FILTRADOS (Para KPIs y Gráfico de Torta RFM)
+      let queryPerfiles = supabaseServerInstance
+        .from('perfiles')
+        .select('id, nombres, apellidos, puntos_acumulados, segmento_rfm');
+
+      if (clienteId && clienteId !== 'Todos') {
+        queryPerfiles = queryPerfiles.eq('id', clienteId);
+      }
+      if (segmento && segmento !== 'Todos') {
+        const stringSegmento = segmento === 'VIP' ? 'Campeones' : segmento;
+        queryPerfiles = queryPerfiles.ilike('segmento_rfm', `%${stringSegmento}%`);
+      }
+
+      const { data: todosLosPerfiles, error: errPerfiles } = await queryPerfiles;
       if (errPerfiles) throw errPerfiles;
 
       const totalClientes = todosLosPerfiles?.length || 0;
       const totalPuntos = todosLosPerfiles?.reduce((sum, p) => sum + (p.puntos_acumulados || 0), 0) || 0;
 
-      // Estructuramos el conteo incluyendo soporte para estados iniciales de tu BD
+      // IDENTIFICAR DINÁMICAMENTE AL CLIENTE VIP (El de mayor puntaje acumulado en el set actual)
+      let topCliente = 'No asignado';
+      if (todosLosPerfiles && todosLosPerfiles.length > 0) {
+        const clonPerfiles = [...todosLosPerfiles];
+        clonPerfiles.sort((a, b) => (b.puntos_acumulados || 0) - (a.puntos_acumulados || 0));
+        topCliente = `${clonPerfiles[0].nombres || ''} ${clonPerfiles[0].apellidos || ''}`.trim() || 'Cliente Premium';
+      }
+
+      // Conteo estructural limpio para el gráfico de torta analítico
       const conteoRFM: Record<string, number> = { 
-        'Campeones': 0, 
-        'Leales': 0, 
-        'En Riesgo': 0, 
-        'Perdidos': 0,
-        'Nuevo Cliente': 0,
-        'Sin Segmentar': 0
+        'Campeones': 0, 'Leales': 0, 'En Riesgo': 0, 'Perdidos': 0, 'Nuevo Cliente': 0, 'Sin Segmentar': 0
       };
 
       todosLosPerfiles?.forEach(p => {
-        // Si el segmento viene vacío de la BD caerá en 'Sin Segmentar'
         const seg = p.segmento_rfm ? p.segmento_rfm.trim() : 'Sin Segmentar';
-        
         if (conteoRFM[seg] !== undefined) {
           conteoRFM[seg]++;
         } else {
-          // Fallback dinámico inteligente para evitar agrupar todo erróneamente en Campeones
           conteoRFM['Sin Segmentar']++;
         }
       });
 
-      // Mapeamos a la estructura limpia que espera el Frontend
       const distribucionRFMReal = Object.keys(conteoRFM)
-        .filter(key => conteoRFM[key] > 0) // Solo enviamos segmentos que tengan clientes reales
+        .filter(key => conteoRFM[key] > 0)
         .map(name => ({
           name,
-          count: conteoRFM[name] // Enviamos el número entero de clientes
+          count: conteoRFM[name]
         }));
 
-      // 3. Monitor Transaccional en Tiempo Real (Últimas 10 ventas)
-      const { data: transaccionesRecientes, error: errHistorial } = await supabaseServerInstance
-        .from('ventas')
-        .select('id_venta, id_cliente, total_venta, fecha_venta')
-        .order('fecha_venta', { ascending: false })
-        .limit(10);
-
-      if (errHistorial) throw errHistorial;
-
-      // 4. Mapeo 100% Real y Dinámico del Inventario vendido (RESOLVIENDO JOIN CON POSTGRES)
+      // 5. DETALLES DE VENTAS CRUZADOS CON EL INVENTARIO (Resolviendo filtros cruzados y especie de Animal)
       const { data: detallesVentasData, error: errDetalles } = await supabaseServerInstance
         .from('detalle_ventas')
         .select(`
           cantidad,
+          id_venta,
           inventario!id_alimento (
             categoria
           )
         `); 
 
-      if (errDetalles) {
-        console.error("❌ [LoyalData Join Error] Error al cruzar detalle_ventas con inventario:", errDetalles.message);
-      }
+      if (errDetalles) console.error("❌ [LoyalData Join Error]:", errDetalles.message);
 
       const acumuladorCategorias: Record<string, { totalVentas: number, totalPuntosAsociados: number, conteoItems: number }> = {};
+      const conteoAnimalesVenta: Record<string, number> = {};
 
       if (!errDetalles && detallesVentasData && detallesVentasData.length > 0) {
+        const idsVentasValidas = new Set(todasLasVentas?.map(v => v.id_venta) || []);
+
         detallesVentasData.forEach((item: any) => {
+          // Si filtramos por cliente y esta venta no le pertenece, se ignora del cálculo
+          if (clienteId && clienteId !== 'Todos' && !idsVentasValidas.has(item.id_venta)) return;
+
           const inv = Array.isArray(item.inventario) ? item.inventario[0] : item.inventario;
-          
           const categoriaReal = inv?.categoria ? inv.categoria.trim() : 'Otros';
           const cant = Number(item.cantidad) || 0;
 
+          // Filtro reactivo por especie (Gato, Perro, etc.)
+          if (animal && animal !== 'Todos' && !categoriaReal.toLowerCase().includes(String(animal).toLowerCase())) {
+            return;
+          }
+
           if (!acumuladorCategorias[categoriaReal]) {
-            acumuladorCategorias[categoriaReal] = { 
-              totalVentas: 0, 
-              totalPuntosAsociados: 0, 
-              conteoItems: 0 
-            };
+            acumuladorCategorias[categoriaReal] = { totalVentas: 0, totalPuntosAsociados: 0, conteoItems: 0 };
           }
 
           acumuladorCategorias[categoriaReal].totalVentas += cant;
           acumuladorCategorias[categoriaReal].totalPuntosAsociados += (cant * 100); 
           acumuladorCategorias[categoriaReal].conteoItems += 1;
+
+          // Registro acumulado para extraer la especie top
+          conteoAnimalesVenta[categoriaReal] = (conteoAnimalesVenta[categoriaReal] || 0) + cant;
         });
       }
+
+      // Determinar dinámicamente cuál es el animal que más vende bajo los filtros activos
+      let topAnimalEspecie = 'Ninguno';
+      let maxVentasAnimal = 0;
+      Object.entries(conteoAnimalesVenta).forEach(([especie, total]) => {
+        if (total > maxVentasAnimal) {
+          maxVentasAnimal = total;
+          topAnimalEspecie = especie;
+        }
+      });
 
       const metricasCategoriasReales = Object.keys(acumuladorCategorias).map(catKey => {
         const item = acumuladorCategorias[catKey];
@@ -452,20 +585,20 @@ async function startServer() {
       });
 
       if (metricasCategoriasReales.length === 0) {
-        metricasCategoriasReales.push({
-          name: "Sin ventas aún",
-          totalVentas: 0,
-          promedioPuntos: 0
-        });
+        metricasCategoriasReales.push({ name: "Sin ventas en filtro", totalVentas: 0, promedioPuntos: 0 });
       }
 
+      // 6. RETORNO DE DATOS LIMPIOS AL DASHBOARD DE CONTROLES
       return res.json({
         success: true,
         totalIngresos,
         totalClientes,
         totalPuntos,
+        topCliente,               // KPI: Quién compra más
+        topAnimalEspecie,         // KPI: Animales que más venden
+        listaClientes,            // Selectores del Frontend
         distribuciónRFM: distribucionRFMReal,
-        transaccionesRecientes: transaccionesRecientes || [] ,
+        transaccionesRecientes: transaccionesRecientes,
         metricasCategorias: metricasCategoriasReales 
       });
 
@@ -484,6 +617,32 @@ async function startServer() {
 
       if (!correo_cliente || !codigo_cupon) {
         return res.status(400).json({ error: "Faltan datos obligatorios (Correo o Código)" });
+      }
+
+      const supabaseServerInstance = getSupabaseServer();
+
+      // 1. Buscar el id del cliente a partir del correo (vía Supabase Auth)
+      const { data: usuarioAuth } = await supabaseServerInstance.auth.admin.listUsers();
+      const clienteEncontrado = usuarioAuth?.users.find(u => u.email === correo_cliente);
+
+      // 2. Interpretar el texto de descuento ("20% DE DESCUENTO" -> tipo + valor)
+      const esPorcentaje = /%/.test(descuento || '');
+      const valorNumerico = parseFloat((descuento || '0').replace(/[^\d.]/g, '')) || 0;
+
+      // 3. Registrar el cupón en la base de datos (única fuente de verdad)
+      const { error: errorCupon } = await supabaseServerInstance
+        .from('cupones')
+        .insert([{
+          codigo: codigo_cupon,
+          id_cliente: clienteEncontrado?.id || null,
+          descuento_tipo: esPorcentaje ? 'porcentaje' : 'monto_fijo',
+          descuento_valor: valorNumerico,
+        }]);
+
+      if (errorCupon) {
+        // Código duplicado u otro error de validación: no enviamos el correo si no quedó registrado
+        console.error("❌ Error al registrar el cupón:", errorCupon.message);
+        return res.status(400).json({ error: `No se pudo registrar el cupón: ${errorCupon.message}` });
       }
 
       await transporter.sendMail({

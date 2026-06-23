@@ -17,7 +17,7 @@ interface CartDrawerProps {
   items: CartItem[];
   onUpdateQuantity: (id: string, delta: number) => void;
   onRemove: (id: string) => void;
-  onCheckout: (userId?: string) => Promise<void>; 
+  onCheckout: (userId?: string, codigoCupon?: string) => Promise<void>; 
   isProcessing: boolean;           
 }
 
@@ -31,6 +31,7 @@ export default function CartDrawer({
   isProcessing, 
 }: CartDrawerProps) {
   const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const [codigoCupon, setCodigoCupon] = React.useState('');
 
   // =========================================================================
   // 🔥 MANEJADOR DE INCREMENTO CON CONTROL DE STOCK CENTRALIZADO
@@ -60,7 +61,7 @@ export default function CartDrawer({
     } catch (error) {
       console.warn("⚠️ No se pudo pre-guardar el ID de usuario:", error);
     } finally {
-      await onCheckout(currentUserId);
+      await onCheckout(currentUserId, codigoCupon.trim() || undefined);
     }
   };
 
@@ -195,6 +196,22 @@ export default function CartDrawer({
             {/* Footer */}
             {items.length > 0 && (
               <div className="p-6 border-t border-gray-100 bg-gray-50 space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-wide">
+                    ¿Tienes un cupón?
+                  </label>
+                  <input
+                    type="text"
+                    value={codigoCupon}
+                    onChange={(e) => setCodigoCupon(e.target.value.toUpperCase())}
+                    placeholder="Ej: VIP-MASC-2026"
+                    disabled={isProcessing}
+                    className="mt-1 w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-mono tracking-wider outline-none focus:border-orange-500"
+                  />
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    El descuento se valida y aplica al iniciar el pago.
+                  </p>
+                </div>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-500 font-medium">Subtotal</span>
                   <span className="text-2xl font-black text-gray-900">{formatCLP(total)}</span>

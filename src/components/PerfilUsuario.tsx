@@ -34,6 +34,15 @@ interface Click {
   timestamp: string;
 }
 
+interface MovimientoPuntos {
+  id_movimiento: number;
+  tipo_movimiento: string;
+  puntos: number;
+  descripcion: string | null;
+  fecha: string;
+  id_venta: number | null;
+}
+
 export default function PerfilUsuario() {
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const [mascotas, setMascotas] = useState<Mascota[]>([]);
@@ -45,6 +54,9 @@ export default function PerfilUsuario() {
   const [clicks, setClicks] = useState<Click[]>([]);
   const [loadingCompras, setLoadingCompras] = useState(false);
   const [loadingClicks, setLoadingClicks] = useState(false);
+  const [expandedPuntos, setExpandedPuntos] = useState(false);
+  const [historialPuntos, setHistorialPuntos] = useState<MovimientoPuntos[]>([]);
+  const [loadingPuntos, setLoadingPuntos] = useState(false);
 
   useEffect(() => {
     loadProfileData();
@@ -98,6 +110,31 @@ export default function PerfilUsuario() {
       loadClicks();
     }
     setExpandedClicks(!expandedClicks);
+  };
+
+  const loadHistorialPuntos = async () => {
+    if (!userInfo) return;
+    setLoadingPuntos(true);
+    try {
+      const { data, error } = await supabase
+        .from('historial_puntos')
+        .select('id_movimiento, tipo_movimiento, puntos, descripcion, fecha, id_venta')
+        .eq('id_cliente', userInfo.id)
+        .order('fecha', { ascending: false })
+        .limit(20);
+      if (!error) setHistorialPuntos(data || []);
+    } catch (err: any) {
+      console.warn('⚠️ Error cargando historial de puntos:', err.message);
+    } finally {
+      setLoadingPuntos(false);
+    }
+  };
+
+  const togglePuntos = () => {
+    if (!expandedPuntos && historialPuntos.length === 0) {
+      loadHistorialPuntos();
+    }
+    setExpandedPuntos(!expandedPuntos);
   };
 
   const loadProfileData = async () => {
@@ -212,15 +249,21 @@ export default function PerfilUsuario() {
           </div>
         </div>
 
-        {/* Tarjeta de Puntos Acumulados */}
-        <div className="bg-gradient-to-br from-orange-500 to-amber-600 p-6 rounded-3xl shadow-xl text-white flex flex-col justify-between relative overflow-hidden">
+        {/* Tarjeta de Puntos Acumulados — clickeable para ver historial */}
+        <div
+          onClick={togglePuntos}
+          className="bg-gradient-to-br from-orange-500 to-amber-600 p-6 rounded-3xl shadow-xl text-white flex flex-col justify-between relative overflow-hidden cursor-pointer hover:shadow-2xl transition-all"
+        >
           <div className="absolute -right-8 -bottom-8 bg-white/10 w-32 h-32 rounded-full blur-xl pointer-events-none"></div>
           
           <div className="flex items-center justify-between">
             <span className="text-xs font-black uppercase tracking-wider bg-white/20 px-3 py-1 rounded-full">
               Fidelización
             </span>
-            <Award className="text-orange-100 h-6 w-6 opacity-90" />
+            <div className="flex items-center gap-2">
+              <Award className="text-orange-100 h-6 w-6 opacity-90" />
+              {expandedPuntos ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+            </div>
           </div>
 
           <div className="mt-4">
@@ -228,7 +271,7 @@ export default function PerfilUsuario() {
               {userInfo?.puntos_acumulados.toLocaleString('es-CL')}
             </span>
             <span className="text-xs text-orange-100 font-medium">
-              Puntos acumulados
+              Puntos acumulados · ver historial
             </span>
           </div>
         </div>
@@ -300,6 +343,74 @@ export default function PerfilUsuario() {
       {error && (
         <div className="bg-red-50 border border-red-200 p-4 rounded-2xl text-red-600 mb-8">
           {error}
+        </div>
+      )}
+
+      {/* SECCIÓN DESPLEGABLE: Historial de Puntos */}
+      {expandedPuntos && (
+        <div className="bg-orange-50 border-2 border-orange-300 p-6 rounded-3xl shadow-lg mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-bold text-gray-800 italic flex items-center gap-2">
+              🏅 Historial de Puntos
+            </h3>
+            <button onClick={togglePuntos} className="text-orange-600 hover:text-orange-700 transition">
+              <ChevronUp className="h-6 w-6" />
+            </button>
+          </div>
+
+          {loadingPuntos ? (
+            <div className="flex justify-center py-8">
+              <Loader className="animate-spin text-orange-500 h-8 w-8" />
+            </div>
+          ) : historialPuntos.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-gray-400">Aún no tienes movimientos de puntos registrados.</p>
+              <p className="text-gray-400 text-xs mt-1">Los puntos se acreditan automáticamente después de cada compra.</p>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-[400px] overflow-y-auto">
+              {historialPuntos.map((mov) => {
+                const esGanado = mov.tipo_movimiento === 'Ganados';
+                const esCanjeado = mov.tipo_movimiento === 'Canjeados';
+                return (
+                  <div
+                    key={mov.id_movimiento}
+                    className="bg-white p-4 rounded-xl border border-orange-200 hover:shadow-md transition"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            esGanado    ? 'bg-emerald-100 text-emerald-700' :
+                            esCanjeado  ? 'bg-blue-100 text-blue-700' :
+                                          'bg-gray-100 text-gray-500'
+                          }`}>
+                            {mov.tipo_movimiento}
+                          </span>
+                          {mov.id_venta && (
+                            <span className="text-[10px] text-gray-400">Orden #{mov.id_venta}</span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-600">{mov.descripcion || '—'}</p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          {new Date(mov.fecha).toLocaleDateString('es-CL', {
+                            day: '2-digit', month: 'short', year: 'numeric',
+                            hour: '2-digit', minute: '2-digit'
+                          })}
+                        </p>
+                      </div>
+                      <div className="text-right ml-4">
+                        <span className={`text-xl font-black ${esGanado ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {esGanado ? '+' : '-'}{mov.puntos.toLocaleString('es-CL')}
+                        </span>
+                        <p className="text-[10px] text-gray-400">pts</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
