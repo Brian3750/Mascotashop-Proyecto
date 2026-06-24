@@ -439,7 +439,8 @@ async function startServer() {
       let queryVentas = supabaseServerInstance
         .from('ventas')
         .select('id_venta, id_cliente, total_venta, fecha_venta')
-        .eq('estado', 'completado');
+        .eq('estado', 'completado')
+        .order('fecha_venta', { ascending: false });
 
       if (clienteId && clienteId !== 'Todos') {
         queryVentas = queryVentas.eq('id_cliente', clienteId);
@@ -451,7 +452,35 @@ async function startServer() {
       const totalIngresos = todasLasVentas?.reduce((sum, v) => sum + Number(v.total_venta), 0) || 0;
 
       // Monitor Transaccional: últimas 10 ventas enriquecidas con segmento_rfm del cliente
-      const ultimasVentas = todasLasVentas ? todasLasVentas.slice(0, 10) : [];
+      // Si hay filtro por animal, solo mostramos ventas que contengan productos de esa categoría
+      let ventasFiltradas = todasLasVentas || [];
+
+      if (animal && animal !== 'Todos') {
+        // Traer ids de ventas que tienen al menos un producto de la categoría filtrada
+        const { data: detallesFiltro } = await supabaseServerInstance
+          .from('detalle_ventas')
+          .select('id_venta, inventario!id_alimento(categoria)');
+
+        const CATEGORIA_NORM: Record<string, string> = {
+          'perros': 'Perro', 'perro': 'Perro', 'gatos': 'Gato', 'gato': 'Gato',
+          'hamster': 'Hamster', 'conejos': 'Conejo', 'conejo': 'Conejo',
+          'peces': 'Pez', 'pez': 'Pez', 'aves': 'Ave', 'ave': 'Ave',
+        };
+
+        const idsVentasConAnimal = new Set(
+          (detallesFiltro || [])
+            .filter((d: any) => {
+              const inv = Array.isArray(d.inventario) ? d.inventario[0] : d.inventario;
+              const cat = CATEGORIA_NORM[(inv?.categoria || '').trim().toLowerCase()] || '';
+              return cat.toLowerCase() === String(animal).toLowerCase();
+            })
+            .map((d: any) => d.id_venta)
+        );
+
+        ventasFiltradas = ventasFiltradas.filter(v => idsVentasConAnimal.has(v.id_venta));
+      }
+
+      const ultimasVentas = ventasFiltradas.slice(0, 10);
 
       const idsClientes = [...new Set(ultimasVentas.map((v: any) => v.id_cliente).filter(Boolean))];
       let mapaSegmentos: Record<string, string> = {};
@@ -536,6 +565,16 @@ async function startServer() {
       const acumuladorCategorias: Record<string, { totalVentas: number, totalPuntosAsociados: number, conteoItems: number }> = {};
       const conteoAnimalesVenta: Record<string, number> = {};
 
+      // Mapa de normalización: valor en BD → nombre display consistente
+      const CATEGORIA_DISPLAY: Record<string, string> = {
+        'perros':  'Perro',   'perro':   'Perro',
+        'gatos':   'Gato',    'gato':    'Gato',
+        'hamster': 'Hamster', 'hámster': 'Hamster',
+        'conejos': 'Conejo',  'conejo':  'Conejo',
+        'peces':   'Pez',     'pez':     'Pez',     'pece': 'Pez',
+        'aves':    'Ave',     'ave':     'Ave',      'pájaros': 'Ave',
+      };
+
       if (!errDetalles && detallesVentasData && detallesVentasData.length > 0) {
         const idsVentasValidas = new Set(todasLasVentas?.map(v => v.id_venta) || []);
 
@@ -544,11 +583,12 @@ async function startServer() {
           if (clienteId && clienteId !== 'Todos' && !idsVentasValidas.has(item.id_venta)) return;
 
           const inv = Array.isArray(item.inventario) ? item.inventario[0] : item.inventario;
-          const categoriaReal = inv?.categoria ? inv.categoria.trim() : 'Otros';
+          const categoriaRaw = inv?.categoria ? inv.categoria.trim().toLowerCase() : 'otros';
+          const categoriaReal = CATEGORIA_DISPLAY[categoriaRaw] || (inv?.categoria?.trim() || 'Otros');
           const cant = Number(item.cantidad) || 0;
 
-          // Filtro reactivo por especie (Gato, Perro, etc.)
-          if (animal && animal !== 'Todos' && !categoriaReal.toLowerCase().includes(String(animal).toLowerCase())) {
+          // Filtro reactivo por especie — compara contra el valor normalizado
+          if (animal && animal !== 'Todos' && categoriaReal.toLowerCase() !== String(animal).toLowerCase()) {
             return;
           }
 
@@ -611,6 +651,127 @@ async function startServer() {
   // =========================================================================
   // 🎁 ENDPOINT: ACCIÓN DEL ADMINISTRADOR PARA ENVIAR CUPONES
   // =========================================================================
+  // =========================================================================
+  // 📦 ENDPOINT: MARCAR PEDIDO LISTO PARA RETIRO + NOTIFICACIÓN
+  // =========================================================================
+  app.post('/api/admin/pedido-listo', async (req, res) => {
+    try {
+      const { id_venta, id_cliente, nombre_cliente, correo_cliente, telefono_cliente, total_venta } = req.body;
+
+      if (!id_venta || !id_cliente) {
+        return res.status(400).json({ error: 'Faltan datos del pedido.' });
+      }
+
+      const supabaseServerInstance = getSupabaseServer();
+
+      // 1. Cambiar estado a 'listo para retiro'
+      const { error: errorEstado } = await supabaseServerInstance
+        .from('ventas')
+        .update({ estado: 'listo para retiro' })
+        .eq('id_venta', id_venta);
+
+      if (errorEstado) throw errorEstado;
+
+      // 2. Calcular y acreditar puntos
+      const puntosGanados = Math.floor(Number(total_venta) * 0.01);
+
+      const { data: perfil } = await supabaseServerInstance
+        .from('perfiles')
+        .select('puntos_acumulados, categoria_rfm')
+        .eq('id', id_cliente)
+        .single();
+
+      const nuevosPuntos = (perfil?.puntos_acumulados || 0) + puntosGanados;
+
+      await supabaseServerInstance
+        .from('perfiles')
+        .update({ puntos_acumulados: nuevosPuntos })
+        .eq('id', id_cliente);
+
+      // Registrar en historial de puntos
+      await supabaseServerInstance
+        .from('historial_puntos')
+        .insert([{
+          id_cliente,
+          tipo_movimiento: 'Ganados',
+          puntos: puntosGanados,
+          id_venta,
+          descripcion: `Puntos por retiro pedido #${id_venta}`
+        }]);
+
+      // 3. Armar mensaje personalizado según RFM
+      const categoria = (perfil?.categoria_rfm || '').toLowerCase();
+      const esRiesgo = categoria.includes('riesgo') || categoria.includes('perder') || categoria.includes('hibernando');
+      const mensajeExtra = esRiesgo ? ' ¡Te extrañamos, vuelve pronto! 🐾❤️' : '';
+
+      const mensajeWsp = `¡Hola ${nombre_cliente}! 🐾 Tu pedido #${id_venta} de MascotaShop ya está listo para retiro en nuestra sucursal. Ganaste ${puntosGanados} puntos de fidelización. Total acumulado: ${nuevosPuntos} pts.${mensajeExtra}`;
+
+      // 4. Enviar correo de confirmación
+      if (correo_cliente) {
+        await transporter.sendMail({
+          from: `"MascotaShop 🐾" <${process.env.SMTP_USER}>`,
+          to: correo_cliente,
+          subject: `¡Tu pedido #${id_venta} está listo para retiro! 🎉`,
+          html: `
+            <div style="font-family:sans-serif;max-width:600px;margin:auto;border:1px solid #e2e8f0;padding:30px;border-radius:16px;background:#fff;">
+              <h2 style="color:#f97316;margin-top:0;">¡Tu pedido está listo, ${nombre_cliente}! 🐾</h2>
+              <p style="color:#475569;">Ya puedes pasar a retirar tu pedido <strong>#${id_venta}</strong> a nuestra sucursal.</p>
+              <div style="background:#fff7ed;border:1px solid #fed7aa;padding:16px;border-radius:12px;margin:20px 0;">
+                <p style="margin:0;color:#9a3412;font-size:14px;"><strong>📍 Dirección:</strong> MascotaShop — Maipú, Santiago</p>
+                <p style="margin:8px 0 0;color:#9a3412;font-size:14px;"><strong>🕐 Horario:</strong> Lunes a Sábado 10:00 – 20:00 hrs</p>
+              </div>
+              <p style="color:#475569;">Por esta compra ganaste <strong style="color:#f97316;">+${puntosGanados} puntos</strong>. Total acumulado: <strong>${nuevosPuntos} pts</strong>.</p>
+              ${esRiesgo ? '<p style="color:#e11d48;">¡Te extrañamos! Fue genial tenerte de vuelta. 🐾❤️</p>' : ''}
+              <hr style="border:0;border-top:1px solid #e2e8f0;margin:20px 0;">
+              <p style="font-size:11px;color:#94a3b8;text-align:center;">MascotaShop SpA — Sistema LoyalData 2026</p>
+            </div>
+          `,
+        });
+      }
+
+      // 5. Devolver la URL de wa.me para que el frontend la abra
+      const telefonoLimpio = (telefono_cliente || '').replace(/\D/g, '');
+      const waUrl = telefonoLimpio
+        ? `https://wa.me/${telefonoLimpio}?text=${encodeURIComponent(mensajeWsp)}`
+        : null;
+
+      console.log(`✅ Pedido #${id_venta} marcado como listo. Correo enviado a ${correo_cliente}. WA: ${waUrl ? 'generado' : 'sin teléfono'}`);
+
+      return res.json({ success: true, waUrl, puntosGanados, nuevosPuntos });
+
+    } catch (error: any) {
+      console.error('❌ Error al marcar pedido listo:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // =========================================================================
+  // 🔄 ENDPOINT: CAMBIAR ESTADO DE PEDIDO (pendiente → en preparación)
+  // =========================================================================
+  app.post('/api/admin/pedido-estado', async (req, res) => {
+    try {
+      const { id_venta, estado } = req.body;
+      if (!id_venta || !estado) return res.status(400).json({ error: 'Faltan datos.' });
+
+      const ESTADOS_VALIDOS = ['en preparación', 'apartado', 'listo para retiro', 'completado'];
+      if (!ESTADOS_VALIDOS.includes(estado)) {
+        return res.status(400).json({ error: `Estado inválido: ${estado}` });
+      }
+
+      const supabaseServerInstance = getSupabaseServer();
+      const { error } = await supabaseServerInstance
+        .from('ventas')
+        .update({ estado })
+        .eq('id_venta', id_venta);
+
+      if (error) throw error;
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error('❌ Error al cambiar estado:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post('/api/admin/enviar-cupon', async (req, res) => {
     try {
       const { correo_cliente, nombre_cliente, codigo_cupon, descuento } = req.body;

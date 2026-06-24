@@ -65,7 +65,6 @@ export default function AdminPanel() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // Modificado para traer pedidos 'pendiente' (recién comprados online) o 'apartado'
       const { data: ventas, error: ventasError } = await supabase
         .from('ventas')
         .select(`
@@ -83,7 +82,7 @@ export default function AdminPanel() {
             categoria_rfm
           )
         `)
-        .in('estado', ['pendiente','Pendiente', 'apartado','Apartado']) // Captura las compras online y las que estás procesando
+        .in('estado', ['pendiente', 'Pendiente', 'apartado', 'Apartado', 'en preparación'])
         .order('fecha_venta', { ascending: false });
 
       if (ventasError) {
@@ -92,7 +91,7 @@ export default function AdminPanel() {
         setPedidos(ventas);
       }
 
-      const { data: inventario, error: inventarioError } = await supabase
+            const { data: inventario, error: inventarioError } = await supabase
         .from('inventario')
         .select('*')
         .order('nombre_producto', { ascending: true });
@@ -131,65 +130,56 @@ export default function AdminPanel() {
     setPassword('');
   };
 
-  // 🛠️ FUNCIÓN NUEVA: CAMBIAR ESTADO A "APARTADO" (PREPARACIÓN)
-  const apartarPedido = async (id: string) => {
-    try {
-      const { error } = await supabase
-        .from('ventas')
-        .update({ estado: 'apartado' })
-        .eq('id_venta', id);
+  const API = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
-      if (error) throw error;
-      alert(`📦 Pedido #${id} marcado como APARTADO. Los productos ya están reservados.`);
+  const cambiarEstadoPedido = async (id_venta: string, estado: string) => {
+    try {
+      const res = await fetch(`${API}/api/admin/pedido-estado`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id_venta, estado })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
       fetchData();
-    } catch (error) {
-      console.error("Error al apartar el pedido:", error);
-      alert("No se pudo apartar el pedido.");
+    } catch (error: any) {
+      console.error('Error al cambiar estado:', error.message);
+      alert('No se pudo cambiar el estado del pedido.');
     }
   };
 
-  // --- FUNCIÓN CON LÓGICA DE PUNTOS Y RECONOCIMIENTO DE RIESGO RFM (PASA A LISTO PARA RETIRO) ---
-  const finalizarYNotificarPedido = async (id: string, nombreCliente: string, totalVenta: number, idCliente: string, perfilCliente: any) => {
+  const notificarPedidoListo = async (pedido: any) => {
+    const nombreC = pedido.perfiles ? `${pedido.perfiles.nombres} ${pedido.perfiles.apellidos}` : 'Cliente';
     try {
-      const puntosGanados = Math.floor(totalVenta * 0.01);
+      const res = await fetch(`${API}/api/admin/pedido-listo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id_venta: pedido.id_venta,
+          id_cliente: pedido.id_cliente,
+          nombre_cliente: nombreC,
+          correo_cliente: pedido.perfiles?.email || '',
+          telefono_cliente: pedido.perfiles?.telefono || '',
+          total_venta: pedido.total_venta,
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-      const { error: errorVenta } = await supabase
-        .from('ventas')
-        .update({ estado: 'listo para retiro' })
-        .eq('id_venta', id);
-
-      if (errorVenta) throw errorVenta;
-
-      const nuevosPuntos = (perfilCliente?.puntos_acumulados || 0) + puntosGanados;
-
-      const { error: errorPuntos } = await supabase
-        .from('perfiles')
-        .update({ puntos_acumulados: nuevosPuntos })
-        .eq('id', idCliente);
-
-      if (errorPuntos) throw errorPuntos;
-
-      const telefonoDestino = perfilCliente?.telefono || '56945685662';
-      const categoria = perfilCliente?.categoria_rfm?.toLowerCase() || '';
-      let mensajeRiesgo = '';
-      
-      if (categoria.includes('riesgo') || categoria.includes('perder') || categoria.includes('hibernando')) {
-        mensajeRiesgo = ` ¡Te extrañamos en mascotashop, vuelve! 🐾❤️`;
+      // Abrir wa.me automáticamente si hay teléfono
+      if (data.waUrl) {
+        window.open(data.waUrl, '_blank');
+      } else {
+        alert(`✅ Pedido #${pedido.id_venta} marcado como listo. Correo enviado.\n⚠️ El cliente no tiene teléfono registrado — no se pudo generar el link de WhatsApp.`);
       }
-
-      const mensaje = `¡Hola ${nombreCliente}! Tu pedido #${id} está listo para ser retirado en nuestra sucursal de Maipú. 🐾 Ganaste ${puntosGanados} puntos. Total acumulado: ${nuevosPuntos}.${mensajeRiesgo}`;
-      const whatsappUrl = `https://wa.me/${telefonoDestino}?text=${encodeURIComponent(mensaje)}`;
-      
-      window.open(whatsappUrl, '_blank');
       fetchData();
-
-    } catch (error) {
-      console.error("Error en el proceso:", error);
-      alert("No se pudo completar el pedido");
+    } catch (error: any) {
+      console.error('Error al notificar pedido:', error.message);
+      alert('No se pudo completar la notificación: ' + error.message);
     }
   };
 
-  const handleUpdateStock = async (id_alimento: string) => {
+    const handleUpdateStock = async (id_alimento: string) => {
     const { error } = await supabase
       .from('inventario')
       .update({ stock: tempStock })
@@ -541,18 +531,30 @@ export default function AdminPanel() {
             <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
               <div className="mb-6 flex items-center justify-between">
                 <div>
-                  <h2 className="text-2xl font-bold text-slate-900">Control de Órdenes Online</h2>
-                  <p className="mt-1 text-sm text-slate-500">Aparta las compras entrantes para congelar mercadería y despacha avisos de retiro.</p>
+                  <h2 className="text-2xl font-bold text-slate-900">Control de Pedidos Online</h2>
+                  <p className="mt-1 text-sm text-slate-500">Gestiona el flujo de preparación y notifica al cliente cuando su pedido esté listo.</p>
                 </div>
                 <button onClick={fetchData} className="p-2 rounded-full hover:bg-slate-100 transition text-slate-400 hover:text-slate-600">
                   <Clock className="h-5 w-5" />
                 </button>
               </div>
 
+              {/* Leyenda de estados */}
+              <div className="flex flex-wrap gap-2 mb-6">
+                {[
+                  { estado: 'pendiente',       color: 'bg-blue-100 text-blue-800',   label: '🕐 Pendiente — recién llegó' },
+                  { estado: 'en preparación',  color: 'bg-amber-100 text-amber-800', label: '📦 En preparación' },
+                  { estado: 'listo para retiro', color: 'bg-emerald-100 text-emerald-800', label: '✅ Listo para retiro' },
+                ].map(s => (
+                  <span key={s.estado} className={`text-[10px] font-bold px-3 py-1 rounded-full ${s.color}`}>{s.label}</span>
+                ))}
+              </div>
+
               {pedidos.length === 0 ? (
                 <div className="rounded-[28px] border border-dashed border-slate-200 bg-slate-50 p-10 text-center text-slate-400">
-                    <PackageCheck className="mx-auto h-12 w-12 opacity-20" />
-                    <p className="mt-4">Sin pedidos online por gestionar en este momento.</p>
+                  <PackageCheck className="mx-auto h-12 w-12 opacity-20" />
+                  <p className="mt-4 font-medium">Sin pedidos por gestionar.</p>
+                  <p className="text-xs mt-1">Cuando un cliente pague online y el pedido esté en estado "pendiente", aparecerá aquí.</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -560,51 +562,88 @@ export default function AdminPanel() {
                     const nombreC = pedido.perfiles ? `${pedido.perfiles.nombres} ${pedido.perfiles.apellidos}` : 'Cliente desconocido';
                     const puntosActuales = pedido.perfiles?.puntos_acumulados || 0;
                     const categoriaRfm = pedido.perfiles?.categoria_rfm || 'Sin Segmentar';
-                    const esRiesgo = categoriaRfm.toLowerCase().includes('riesgo') || categoriaRfm.toLowerCase().includes('perder') || categoriaRfm.toLowerCase().includes('hibernando');
-                    const esApartado = pedido.estado === 'apartado';
+                    const esRiesgo = categoriaRfm.toLowerCase().includes('riesgo') || categoriaRfm.toLowerCase().includes('perder');
+                    const estado = pedido.estado?.toLowerCase() || 'pendiente';
+                    const esPendiente = estado === 'pendiente';
+                    const esEnPrep = estado === 'en preparación';
+                    const esListo = estado === 'listo para retiro';
+                    const tieneTelefono = !!pedido.perfiles?.telefono;
+
+                    const estadoBadge = esPendiente
+                      ? 'bg-blue-100 text-blue-800'
+                      : esEnPrep
+                        ? 'bg-amber-100 text-amber-800'
+                        : 'bg-emerald-100 text-emerald-800';
 
                     return (
-                      <article key={pedido.id_venta} className="flex flex-col gap-4 rounded-[28px] border border-slate-100 bg-slate-50/50 p-6 md:flex-row md:items-center md:justify-between">
-                        <div className="space-y-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md">Venta #{pedido.id_venta}</span>
-                            
-                            {/* Etiqueta de estado dinámico */}
-                            <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md ${esApartado ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-blue-100 text-blue-800'}`}>
-                              Estado: {pedido.estado}
-                            </span>
+                      <article key={pedido.id_venta} className={`rounded-[28px] border p-6 transition ${esRiesgo ? 'border-rose-200 bg-rose-50/30' : 'border-slate-100 bg-slate-50/50'}`}>
+                        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                          
+                          {/* Info del pedido */}
+                          <div className="space-y-2 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[10px] font-bold uppercase tracking-widest text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md">
+                                Pedido #{pedido.id_venta}
+                              </span>
+                              <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md ${estadoBadge}`}>
+                                {pedido.estado}
+                              </span>
+                              <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">
+                                {puntosActuales} pts
+                              </span>
+                              {esRiesgo && (
+                                <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md bg-rose-100 text-rose-700 border border-rose-200 animate-pulse">
+                                  ⚠️ Cliente en riesgo
+                                </span>
+                              )}
+                            </div>
 
-                            <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md">
-                              {puntosActuales} pts
-                            </span>
-                            <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md ${esRiesgo ? 'bg-rose-100 text-rose-700 border border-rose-200 animate-pulse' : 'bg-slate-200 text-slate-700'}`}>
-                              RFM: {categoriaRfm}
-                            </span>
+                            <h3 className="text-lg font-bold text-slate-900">{nombreC}</h3>
+
+                            <div className="flex flex-wrap gap-3 text-sm text-slate-500">
+                              <span>💰 ${Number(pedido.total_venta).toLocaleString('es-CL')}</span>
+                              <span>📅 {new Date(pedido.fecha_venta).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                              {tieneTelefono
+                                ? <span className="text-emerald-600">📱 {pedido.perfiles.telefono}</span>
+                                : <span className="text-rose-400">📵 Sin teléfono registrado</span>
+                              }
+                            </div>
                           </div>
-                          <h3 className="text-lg font-bold text-slate-900">{nombreC}</h3>
-                          <p className="text-sm text-slate-500">Total a pagar: ${pedido.total_venta?.toLocaleString()}</p>
-                        </div>
-                        
-                        <div className="flex flex-wrap gap-2">
-                          {/* Botón 1: Apartar Pedido (Solo se muestra si está en estado 'pendiente') */}
-                          {!esApartado && (
-                            <button
-                              onClick={() => apartarPedido(pedido.id_venta)}
-                              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-amber-500 hover:bg-amber-600 px-5 py-3 text-sm font-bold text-white transition shadow-sm"
-                            >
-                              <Package className="h-4 w-4" /> 
-                              Apartar Mercadería
-                            </button>
-                          )}
 
-                          {/* Botón 2: Terminar y Notificar (Disponible siempre para pasarlo a retiro) */}
-                          <button
-                            onClick={() => finalizarYNotificarPedido(pedido.id_venta, nombreC, pedido.total_venta, pedido.id_cliente, pedido.perfiles)}
-                            className={`inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-bold text-white transition ${esRiesgo ? 'bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-200' : 'bg-slate-900 hover:bg-slate-800'}`}
-                          >
-                            <MessageSquare className="h-4 w-4" /> 
-                            {esApartado ? 'Listo para Retiro ✅' : 'Saltar a Retiro Directo'}
-                          </button>
+                          {/* Botones de acción según estado */}
+                          <div className="flex flex-wrap gap-2 md:flex-col md:items-end">
+
+                            {/* Pendiente → En preparación */}
+                            {esPendiente && (
+                              <button
+                                onClick={() => cambiarEstadoPedido(pedido.id_venta, 'en preparación')}
+                                className="inline-flex items-center gap-2 rounded-2xl bg-amber-500 hover:bg-amber-600 px-5 py-2.5 text-sm font-bold text-white transition shadow-sm"
+                              >
+                                <Package className="h-4 w-4" />
+                                Iniciar preparación
+                              </button>
+                            )}
+
+                            {/* En preparación → Listo para retiro + notificación */}
+                            {esEnPrep && (
+                              <button
+                                onClick={() => notificarPedidoListo(pedido)}
+                                className={`inline-flex items-center gap-2 rounded-2xl px-5 py-2.5 text-sm font-bold text-white transition shadow-sm ${esRiesgo ? 'bg-rose-600 hover:bg-rose-700' : 'bg-slate-900 hover:bg-slate-700'}`}
+                              >
+                                <MessageSquare className="h-4 w-4" />
+                                Listo — Notificar cliente
+                              </button>
+                            )}
+
+                            {/* Listo para retiro — solo info */}
+                            {esListo && (
+                              <span className="inline-flex items-center gap-2 rounded-2xl bg-emerald-100 text-emerald-800 px-5 py-2.5 text-sm font-bold">
+                                <PackageCheck className="h-4 w-4" />
+                                Cliente notificado ✅
+                              </span>
+                            )}
+
+                          </div>
                         </div>
                       </article>
                     );
@@ -614,7 +653,7 @@ export default function AdminPanel() {
             </section>
           )}
 
-          {/* VISTA DE INVENTARIO */}
+                    {/* VISTA DE INVENTARIO */}
           {activeTab === 'inventario' && (
             <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
               <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
