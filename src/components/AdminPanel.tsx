@@ -48,6 +48,7 @@ export default function AdminPanel() {
     descuento: '20% DE DESCUENTO'
   });
   const [sendingCoupon, setSendingCoupon] = useState(false);
+  const [modalNotif, setModalNotif] = useState<{ pedido: any; telefono: string } | null>(null);
 
   // Verificar si ya existía una sesión administrativa activa en este navegador
   useEffect(() => {
@@ -605,7 +606,23 @@ export default function AdminPanel() {
                               <span>📅 {new Date(pedido.fecha_venta).toLocaleDateString('es-CL', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                               {tieneTelefono
                                 ? <span className="text-emerald-600">📱 {pedido.perfiles.telefono}</span>
-                                : <span className="text-rose-400">📵 Sin teléfono registrado</span>
+                                : (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Teléfono (WhatsApp)</span>
+                                    <input
+                                      type="tel"
+                                      placeholder="569XXXXXXXX"
+                                      className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs outline-none focus:border-orange-500 transition font-mono tracking-widest placeholder-slate-300 w-40"
+                                      onChange={e => {
+                                        setModalNotif(prev => prev && prev.pedido.id_venta === pedido.id_venta
+                                          ? { ...prev, telefono: e.target.value }
+                                          : { pedido, telefono: e.target.value }
+                                        );
+                                        pedido._telefonoManual = e.target.value;
+                                      }}
+                                    />
+                                  </div>
+                                )
                               }
                             </div>
                           </div>
@@ -627,7 +644,7 @@ export default function AdminPanel() {
                             {/* En preparación → Listo para retiro + notificación */}
                             {esEnPrep && (
                               <button
-                                onClick={() => notificarPedidoListo(pedido)}
+                                onClick={() => setModalNotif({ pedido, telefono: pedido.perfiles?.telefono || pedido._telefonoManual || '' })}
                                 className={`inline-flex items-center gap-2 rounded-2xl px-5 py-2.5 text-sm font-bold text-white transition shadow-sm ${esRiesgo ? 'bg-rose-600 hover:bg-rose-700' : 'bg-slate-900 hover:bg-slate-700'}`}
                               >
                                 <MessageSquare className="h-4 w-4" />
@@ -802,6 +819,73 @@ export default function AdminPanel() {
 
         </div>
       </div>
+
+      {/* ── Modal: confirmar teléfono antes de notificar ── */}
+      {modalNotif && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-white rounded-[28px] shadow-2xl p-8 w-full max-w-md mx-4 space-y-6">
+
+            {/* Header */}
+            <div className="flex items-center gap-3">
+              <div className="bg-orange-500/10 p-3 rounded-xl border border-orange-500/20">
+                <MessageSquare className="h-5 w-5 text-orange-500" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Notificar cliente</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Se enviará correo + WhatsApp con el mensaje de retiro</p>
+              </div>
+            </div>
+
+            {/* Resumen del pedido */}
+            <div className="bg-slate-50 rounded-2xl px-4 py-3 space-y-1 border border-slate-100">
+              <p className="text-xs text-slate-500"><span className="font-bold text-slate-700">Pedido:</span> #{modalNotif.pedido.id_venta}</p>
+              <p className="text-xs text-slate-500"><span className="font-bold text-slate-700">Cliente:</span> {modalNotif.pedido.perfiles ? `${modalNotif.pedido.perfiles.nombres} ${modalNotif.pedido.perfiles.apellidos}` : '—'}</p>
+              <p className="text-xs text-slate-500"><span className="font-bold text-slate-700">Total:</span> ${Number(modalNotif.pedido.total_venta).toLocaleString('es-CL')}</p>
+            </div>
+
+            {/* Input teléfono — mismo estilo que cupones */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                Teléfono (WhatsApp)
+              </label>
+              <input
+                type="tel"
+                placeholder="569XXXXXXXX"
+                value={modalNotif.telefono}
+                onChange={e => setModalNotif({ ...modalNotif, telefono: e.target.value })}
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-orange-500 transition font-mono tracking-widest placeholder-slate-300"
+              />
+              <p className="text-[11px] text-slate-400">Formato: 569XXXXXXXX · sin + ni espacios</p>
+            </div>
+
+            {/* Botones */}
+            <div className="flex gap-3">
+              <button
+                onClick={() => setModalNotif(null)}
+                className="flex-1 rounded-2xl border border-slate-200 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50 transition"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  const pedidoConTelefono = {
+                    ...modalNotif.pedido,
+                    perfiles: { ...modalNotif.pedido.perfiles, telefono: modalNotif.telefono }
+                  };
+                  setModalNotif(null);
+                  await notificarPedidoListo(pedidoConTelefono);
+                }}
+                className="flex-1 rounded-2xl bg-emerald-600 hover:bg-emerald-700 py-3 text-sm font-bold text-white transition flex items-center justify-center gap-2"
+              >
+                <MessageSquare className="h-4 w-4" />
+                Enviar notificación
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
