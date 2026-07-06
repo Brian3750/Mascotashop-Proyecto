@@ -167,11 +167,10 @@ export default function AdminPanel() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      // Abrir wa.me automáticamente si hay teléfono
-      if (data.waUrl) {
-        window.open(data.waUrl, '_blank');
+      if (data.whatsappEnviado) {
+        alert(`✅ Pedido #${pedido.id_venta} marcado como listo.\n📧 Correo enviado.\n📲 WhatsApp enviado al cliente.`);
       } else {
-        alert(`✅ Pedido #${pedido.id_venta} marcado como listo. Correo enviado.\n⚠️ El cliente no tiene teléfono registrado — no se pudo generar el link de WhatsApp.`);
+        alert(`✅ Pedido #${pedido.id_venta} marcado como listo. Correo enviado.\n⚠️ El WhatsApp no se pudo enviar (sin teléfono o fuera de la ventana de 24h del sandbox de Twilio).`);
       }
       fetchData();
     } catch (error: any) {
@@ -293,17 +292,32 @@ export default function AdminPanel() {
     }
   };
 
-  const handleSendCouponWhatsApp = () => {
+  const handleSendCouponWhatsApp = async () => {
     if (!couponForm.telefono_cliente) {
       alert('Por favor, introduce el teléfono del cliente para enviar por WhatsApp.');
       return;
     }
 
-    const nombre = couponForm.nombre_cliente || 'Amigo/a';
-    const textoWS = `¡Hola ${nombre}! Queremos consentir a tu mascota. 🐾 Te regalamos un cupón exclusivo de *${couponForm.descuento}*. Usa el código: *${couponForm.codigo_cupon}* en tu próxima compra. ¡Te esperamos en MascotaShop!`;
-    
-    const url = `https://wa.me/${couponForm.telefono_cliente}?text=${encodeURIComponent(textoWS)}`;
-    window.open(url, '_blank');
+    setSendingCoupon(true);
+    try {
+      const res = await fetch(`${API}/api/admin/enviar-cupon-whatsapp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          telefono_cliente: couponForm.telefono_cliente,
+          nombre_cliente: couponForm.nombre_cliente,
+          codigo_cupon: couponForm.codigo_cupon,
+          descuento: couponForm.descuento,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      alert(`✅ Cupón enviado por WhatsApp a ${couponForm.telefono_cliente}`);
+    } catch (error: any) {
+      alert(`⚠️ No se pudo enviar el WhatsApp: ${error.message}`);
+    } finally {
+      setSendingCoupon(false);
+    }
   };
 
   if (!isCustomAdminMode) {

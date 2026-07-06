@@ -10,6 +10,7 @@ import pkg from 'transbank-sdk';
 import { createClient } from '@supabase/supabase-js';
 import { MongoClient } from 'mongodb';
 import nodemailer from 'nodemailer';
+import twilio from 'twilio';
 
 const { WebpayPlus, Options, IntegrationCommerceCodes, IntegrationApiKeys, Environment } = pkg as any;
 
@@ -30,14 +31,54 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 let mongoDb: any;
 
+// Cliente Twilio — se inicializa solo si las variables están en .env.local
+const twilioClient = (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
+  ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+  : null;
+
 async function enviarNotificacionWhatsApp(datosTicket: any) {
+  const telefono = datosTicket.telefono;
+  const fromNumber = process.env.TWILIO_WHATSAPP_FROM || 'whatsapp:+14155238886';
+
+  if (!twilioClient) {
+    console.warn('⚠️ [WhatsApp] Twilio no configurado — revisa TWILIO_ACCOUNT_SID y TWILIO_AUTH_TOKEN en .env.local');
+    return false;
+  }
+
+  if (!telefono) {
+    console.warn('⚠️ [WhatsApp] Cliente sin teléfono registrado — mensaje no enviado.');
+    return false;
+  }
+
+  // Formatear: 945685662 → +56945685662 → whatsapp:+56945685662
+  let telefonoLimpio = String(telefono).replace(/\D/g, '');
+
+  // Si no empieza con 56 (código de Chile) y tiene 9 dígitos (celular sin código país), se lo agregamos
+  if (!telefonoLimpio.startsWith('56') && telefonoLimpio.length === 9) {
+    telefonoLimpio = `56${telefonoLimpio}`;
+  }
+
+  const telefonoWA = `whatsapp:+${telefonoLimpio}`;
+
+  const mensaje = datosTicket.mensajePersonalizado || (
+    `🐾 *MascotaShop* — Confirmación de compra\n\n` +
+    `Hola *${datosTicket.cliente}*! Tu pago fue procesado con éxito ✅\n\n` +
+    `📋 Orden: *${datosTicket.buyOrder}*\n` +
+    `💰 Total pagado: *$${Number(datosTicket.monto).toLocaleString('es-CL')}*\n` +
+    `🕐 Fecha: *${datosTicket.fechaHora}*\n\n` +
+    `¡Gracias por confiar en nosotros! 🐶🐱`
+  );
+
   try {
-    console.log(`📲 [WhatsApp API] Enviando ticket de forma automática...`);
-    console.log(`📱 Destinatario: ${datosTicket.cliente}`);
-    console.log(`📱 Mensaje: Tu compra ${datosTicket.buyOrder} por un monto de $${datosTicket.monto} ha sido procesada con éxito a las ${datosTicket.fechaHora}.`);
+    const msg = await twilioClient.messages.create({
+      from: fromNumber,
+      to: telefonoWA,
+      body: mensaje,
+    });
+    console.log(`✅ [WhatsApp Twilio] Mensaje enviado a ${telefonoWA} — SID: ${msg.sid}`);
     return true;
   } catch (error: any) {
-    console.error("⚠️ No se pudo despachar el mensaje de WhatsApp:", error.message);
+    console.error(`❌ [WhatsApp Twilio] Error al enviar a ${telefonoWA}:`, error.message);
     return false;
   }
 }
@@ -285,6 +326,7 @@ async function startServer() {
         }
 
         let nombreClienteTicket = "Cliente MascotaShop";
+        let telefonoClienteTicket: string | null = null;
 
         if (id_usuario) {
           console.log("6. 🎁 Calculando y guardando puntos de fidelización...");
@@ -292,7 +334,7 @@ async function startServer() {
 
           const { data: perfil, error: errorPerfil } = await supabaseServerInstance
             .from('perfiles')
-            .select('puntos_acumulados, nombres, apellidos')
+            .select('puntos_acumulados, nombres, apellidos, telefono')
             .eq('id', id_usuario)
             .single();
 
@@ -301,6 +343,9 @@ async function startServer() {
           } else {
             if (perfil?.nombres) {
               nombreClienteTicket = `${perfil.nombres} ${perfil.apellidos || ''}`.trim();
+            }
+            if (perfil?.telefono) {
+              telefonoClienteTicket = perfil.telefono;
             }
 
             const nuevosPuntos = (perfil?.puntos_acumulados || 0) + puntosGanados;
@@ -351,7 +396,8 @@ async function startServer() {
           buyOrder: commitResponse.buy_order,
           fechaHora: fechaChile,
           cliente: nombreClienteTicket,
-          monto: commitResponse.amount
+          monto: commitResponse.amount,
+          telefono: telefonoClienteTicket
         };
 
         await enviarNotificacionWhatsApp(estructuraTicket);
@@ -729,15 +775,19 @@ async function startServer() {
         });
       }
 
-      // 5. Devolver la URL de wa.me para que el frontend la abra
-      const telefonoLimpio = (telefono_cliente || '').replace(/\D/g, '');
-      const waUrl = telefonoLimpio
-        ? `https://wa.me/${telefonoLimpio}?text=${encodeURIComponent(mensajeWsp)}`
-        : null;
+      // 5. Enviar el mensaje real por Twilio WhatsApp (en vez de generar un link wa.me)
+      const enviado = await enviarNotificacionWhatsApp({
+        cliente: nombre_cliente,
+        telefono: telefono_cliente,
+        buyOrder: id_venta,
+        monto: total_venta,
+        fechaHora: new Date().toLocaleString('es-CL', { timeZone: 'America/Santiago' }),
+        mensajePersonalizado: mensajeWsp,
+      });
 
-      console.log(`✅ Pedido #${id_venta} marcado como listo. Correo enviado a ${correo_cliente}. WA: ${waUrl ? 'generado' : 'sin teléfono'}`);
+      console.log(`✅ Pedido #${id_venta} marcado como listo. Correo enviado a ${correo_cliente}. WhatsApp: ${enviado ? 'enviado ✅' : 'no enviado ⚠️'}`);
 
-      return res.json({ success: true, waUrl, puntosGanados, nuevosPuntos });
+      return res.json({ success: true, whatsappEnviado: enviado, puntosGanados, nuevosPuntos });
 
     } catch (error: any) {
       console.error('❌ Error al marcar pedido listo:', error.message);
@@ -768,6 +818,43 @@ async function startServer() {
       return res.json({ success: true });
     } catch (error: any) {
       console.error('❌ Error al cambiar estado:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // =========================================================================
+  // 🎁 ENDPOINT: ENVIAR CUPÓN POR WHATSAPP (TWILIO)
+  // =========================================================================
+  app.post('/api/admin/enviar-cupon-whatsapp', async (req, res) => {
+    try {
+      const { telefono_cliente, nombre_cliente, codigo_cupon, descuento } = req.body;
+
+      if (!telefono_cliente || !codigo_cupon) {
+        return res.status(400).json({ error: 'Faltan datos obligatorios (Teléfono o Código)' });
+      }
+
+      const nombre = nombre_cliente || 'Amigo/a';
+      const mensajeCupon =
+        `🎁 *MascotaShop* — Beneficio Exclusivo\n\n` +
+        `¡Hola *${nombre}*! Queremos consentir a tu mascota. 🐾\n\n` +
+        `Te regalamos un cupón de *${descuento || 'descuento'}*.\n\n` +
+        `🏷️ Código: *${codigo_cupon}*\n\n` +
+        `Usa este código en tu próxima compra. ¡Te esperamos en MascotaShop!`;
+
+      const enviado = await enviarNotificacionWhatsApp({
+        telefono: telefono_cliente,
+        mensajePersonalizado: mensajeCupon,
+      });
+
+      if (!enviado) {
+        return res.status(400).json({ error: 'No se pudo enviar el WhatsApp. Revisa que el teléfono esté correcto y dentro de la ventana de 24h del sandbox.' });
+      }
+
+      console.log(`🎁 [Admin] Cupón ${codigo_cupon} enviado por WhatsApp a ${telefono_cliente}`);
+      return res.json({ success: true, message: 'Cupón enviado por WhatsApp.' });
+
+    } catch (error: any) {
+      console.error('❌ Error al enviar cupón por WhatsApp:', error.message);
       return res.status(500).json({ error: error.message });
     }
   });
