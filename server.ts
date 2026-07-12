@@ -152,6 +152,47 @@ async function startServer() {
   // =========================================================================
   // 🔥 ENDPOINT TRANSACCIONAL: VALIDACIÓN DE STOCK ANTES DE PAGO
   // =========================================================================
+  // =========================================================================
+  // 🎟️ ENDPOINT: VALIDAR CUPÓN (solo consulta, sin marcar como usado)
+  // =========================================================================
+  app.post('/api/validar-cupon', async (req, res) => {
+    try {
+      const { codigo } = req.body;
+      if (!codigo) return res.status(400).json({ error: 'Falta el código del cupón.' });
+
+      const supabaseServerInstance = getSupabaseServer();
+      const codigoNorm = String(codigo).trim().toUpperCase();
+
+      const { data: cupon, error } = await supabaseServerInstance
+        .from('cupones')
+        .select('id_cupon, codigo, descuento_tipo, descuento_valor, usado, fecha_expiracion, id_cliente')
+        .eq('codigo', codigoNorm)
+        .maybeSingle();
+
+      if (error) {
+        console.error('❌ [validar-cupon] Error Supabase:', error?.message, error?.code, '| Código buscado:', codigoNorm);
+        return res.status(500).json({ error: 'Error al consultar el cupón.' });
+      }
+      if (!cupon) {
+        console.warn(`⚠️ [validar-cupon] Cupón no encontrado: ${codigoNorm}`);
+        return res.status(404).json({ error: 'El cupón no existe.' });
+      }
+      if (cupon.usado) return res.status(400).json({ error: 'Este cupón ya fue utilizado.' });
+      if (cupon.fecha_expiracion && new Date(cupon.fecha_expiracion) < new Date()) {
+        return res.status(400).json({ error: 'Este cupón está vencido.' });
+      }
+
+      return res.json({
+        success: true,
+        codigo: cupon.codigo,
+        descuento_tipo: cupon.descuento_tipo,
+        descuento_valor: Number(cupon.descuento_valor),
+      });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post('/api/crear-pago', async (req, res) => {
     try {
       const { sessionId, buyOrder, cartItems, codigoCupon } = req.body;
@@ -187,38 +228,55 @@ async function startServer() {
         totalReal += Number(productoDB.precio_venta) * item.quantity;
       }
 
-      // 2. Validar el cupón (si vino uno) y aplicar el descuento sobre el total real
+      // 2. Validar el cupón (si vino uno) y aplicar el descuento del 20% sobre el total real
       let cuponValidado: any = null;
 
       if (codigoCupon) {
-        const { data: cupon, error: errorCupon } = await supabaseServerInstance
-          .from('cupones')
-          .select('id_cupon, codigo, id_cliente, descuento_tipo, descuento_valor, usado, fecha_expiracion')
-          .eq('codigo', codigoCupon)
-          .single();
+        const codigoNormalizado = String(codigoCupon).trim().toUpperCase();
 
-        if (errorCupon || !cupon) {
-          return res.status(400).json({ error: "El código de cupón no existe." });
-        }
-        if (cupon.usado) {
-          return res.status(400).json({ error: "Este cupón ya fue utilizado." });
-        }
-        if (cupon.fecha_expiracion && new Date(cupon.fecha_expiracion) < new Date()) {
-          return res.status(400).json({ error: "Este cupón se encuentra vencido." });
-        }
-        // Si el cupón fue emitido para un cliente específico, solo ese cliente puede usarlo
-        if (cupon.id_cliente && cupon.id_cliente !== sessionId) {
-          return res.status(400).json({ error: "Este cupón no está disponible para esta cuenta." });
-        }
+        try {
+          const { data: cupones, error: errorCupon } = await supabaseServerInstance
+            .from('cupones')
+            .select('*');
 
-        cuponValidado = cupon;
+          if (errorCupon) {
+            console.warn('⚠️ No se pudo consultar la tabla de cupones:', errorCupon.message);
+          } else {
+            const cupon = (cupones || []).find((item: any) => {
+              const codigoDb = String(item?.codigo ?? '').trim().toUpperCase();
+              const codigoIngresado = codigoNormalizado;
+              return codigoDb === codigoIngresado || codigoDb.includes(codigoIngresado) || codigoIngresado.includes(codigoDb);
+            }) || null;
 
-        if (cupon.descuento_tipo === 'porcentaje') {
-          totalReal = totalReal * (1 - Number(cupon.descuento_valor) / 100);
-        } else {
-          totalReal = totalReal - Number(cupon.descuento_valor);
+            if (cupon) {
+              if (cupon.usado) {
+                return res.status(400).json({ error: `El cupón ${codigoNormalizado} ya fue utilizado.` });
+              } else if (cupon.fecha_expiracion && new Date(cupon.fecha_expiracion) < new Date()) {
+                return res.status(400).json({ error: `El cupón ${codigoNormalizado} está vencido.` });
+              } else if (cupon.id_cliente && cupon.id_cliente !== sessionId) {
+                return res.status(400).json({ error: `El cupón ${codigoNormalizado} no está disponible para esta cuenta.` });
+              } else {
+                cuponValidado = cupon;
+
+                // Aplicar descuento real desde la BD (porcentaje o monto fijo)
+                const valorDescuento = Number(cupon.descuento_valor) || 0;
+                if (cupon.descuento_tipo === 'monto_fijo') {
+                  totalReal = totalReal - valorDescuento;
+                } else {
+                  // porcentaje (ej: descuento_valor = 20 → 20%)
+                  totalReal = totalReal * (1 - valorDescuento / 100);
+                }
+                if (totalReal < 0) totalReal = 0;
+
+                console.log(`🎁 Cupón válido: ${codigoNormalizado}. Tipo: ${cupon.descuento_tipo}, Valor: ${valorDescuento}. Total final: $${Math.round(totalReal).toLocaleString('es-CL')}`);
+              }
+            } else {
+              return res.status(400).json({ error: `Cupón no encontrado: ${codigoNormalizado}` });
+            }
+          }
+        } catch (err: any) {
+          console.warn('⚠️ Error inesperado al validar cupón:', err?.message || err);
         }
-        if (totalReal < 0) totalReal = 0;
       }
 
       const totalFinal = Math.round(totalReal);
@@ -361,7 +419,14 @@ async function startServer() {
               console.log(`✅ Puntos guardados: +${puntosGanados} puntos. Total: ${nuevosPuntos} puntos`);
 
               // Registrar el movimiento en el historial (auditoría/trazabilidad)
-              const { error: errorHistorial } = await supabaseServerInstance
+              console.log(`📊 Intentando guardar historial de puntos:`, {
+                id_cliente: id_usuario,
+                tipo_movimiento: 'Ganados',
+                puntos: puntosGanados,
+                id_venta: nuevaVenta.id_venta
+              });
+
+              const { error: errorHistorial, data: datosHistorial } = await supabaseServerInstance
                 .from('historial_puntos')
                 .insert([{
                   id_cliente: id_usuario,
@@ -369,10 +434,13 @@ async function startServer() {
                   puntos: puntosGanados,
                   id_venta: nuevaVenta.id_venta,
                   descripcion: `Puntos por compra #${nuevaVenta.id_venta}`
-                }]);
+                }])
+                .select();
 
               if (errorHistorial) {
-                console.error(`⚠️ No se pudo registrar el historial de puntos:`, errorHistorial.message);
+                console.error(`⚠️ No se pudo registrar el historial de puntos:`, errorHistorial.code, errorHistorial.message, errorHistorial.details);
+              } else {
+                console.log(`✅ Historial de puntos guardado:`, datosHistorial);
               }
             }
           }
@@ -735,7 +803,14 @@ async function startServer() {
         .eq('id', id_cliente);
 
       // Registrar en historial de puntos
-      await supabaseServerInstance
+      console.log(`📊 Intentando guardar historial (retiro pedido):`, {
+        id_cliente,
+        tipo_movimiento: 'Ganados',
+        puntos: puntosGanados,
+        id_venta
+      });
+
+      const { error: errorHistorialRetiro, data: datosHistorialRetiro } = await supabaseServerInstance
         .from('historial_puntos')
         .insert([{
           id_cliente,
@@ -743,7 +818,14 @@ async function startServer() {
           puntos: puntosGanados,
           id_venta,
           descripcion: `Puntos por retiro pedido #${id_venta}`
-        }]);
+        }])
+        .select();
+
+      if (errorHistorialRetiro) {
+        console.error(`⚠️ Error al registrar historial (retiro):`, errorHistorialRetiro.code, errorHistorialRetiro.message, errorHistorialRetiro.details);
+      } else {
+        console.log(`✅ Historial de puntos (retiro) guardado:`, datosHistorialRetiro);
+      }
 
       // 3. Armar mensaje personalizado según RFM
       const categoria = (perfil?.categoria_rfm || '').toLowerCase();
@@ -827,19 +909,69 @@ async function startServer() {
   // =========================================================================
   app.post('/api/admin/enviar-cupon-whatsapp', async (req, res) => {
     try {
-      const { telefono_cliente, nombre_cliente, codigo_cupon, descuento } = req.body;
+      const { telefono_cliente, nombre_cliente, codigo_cupon, descuento, correo_cliente } = req.body;
 
       if (!telefono_cliente || !codigo_cupon) {
         return res.status(400).json({ error: 'Faltan datos obligatorios (Teléfono o Código)' });
       }
 
+      const supabaseServerInstance = getSupabaseServer();
+
+      // 1. Buscar el id del cliente por correo si viene
+      let idCliente = null;
+      if (correo_cliente) {
+        const { data: usuarioAuth } = await supabaseServerInstance.auth.admin.listUsers();
+        const clienteEncontrado = usuarioAuth?.users.find((u: any) => u.email === correo_cliente);
+        idCliente = clienteEncontrado?.id || null;
+      }
+
+      // 2. Parsear descuento
+      const esPorcentaje = /%/.test(descuento || '');
+      const valorDescuento = parseFloat((descuento || '20').replace(/[^\d.]/g, '')) || 20;
+
+      // 3. Verificar si el código ya existe para no duplicar
+      const { data: cuponExistente } = await supabaseServerInstance
+        .from('cupones')
+        .select('id_cupon')
+        .eq('codigo', codigo_cupon)
+        .maybeSingle();
+
+      if (!cuponExistente) {
+        const { error: errorInsert } = await supabaseServerInstance
+          .from('cupones')
+          .insert([{
+            codigo: codigo_cupon,
+            id_cliente: idCliente,
+            descuento_tipo: esPorcentaje ? 'porcentaje' : 'monto_fijo',
+            descuento_valor: valorDescuento,
+          }]);
+
+        if (errorInsert) {
+          console.error('❌ Error al guardar cupón en BD:', errorInsert.message);
+          return res.status(400).json({ error: `No se pudo guardar el cupón: ${errorInsert.message}` });
+        }
+        console.log(`✅ Cupón ${codigo_cupon} guardado en Supabase.`);
+      } else {
+        console.log(`ℹ️ Cupón ${codigo_cupon} ya existía en la BD — no se duplica.`);
+      }
+
+      // 4. Enviar por WhatsApp
       const nombre = nombre_cliente || 'Amigo/a';
+      const descuentoTexto = esPorcentaje
+        ? `*${valorDescuento}% DE DESCUENTO*`
+        : `*$${valorDescuento.toLocaleString('es-CL')} de descuento*`;
+
       const mensajeCupon =
         `🎁 *MascotaShop* — Beneficio Exclusivo\n\n` +
         `¡Hola *${nombre}*! Queremos consentir a tu mascota. 🐾\n\n` +
-        `Te regalamos un cupón de *${descuento || 'descuento'}*.\n\n` +
+        `Te regalamos un cupón de ${descuentoTexto}.\n\n` +
         `🏷️ Código: *${codigo_cupon}*\n\n` +
-        `Usa este código en tu próxima compra. ¡Te esperamos en MascotaShop!`;
+        `📝 Cómo usarlo:\n` +
+        `1️⃣ Agrega productos al carrito\n` +
+        `2️⃣ En "¿Tienes un cupón?" ingresa: ${codigo_cupon}\n` +
+        `3️⃣ El descuento se aplica automáticamente ✅\n` +
+        `4️⃣ ¡Paga normalmente! 💳\n\n` +
+        `¡Te esperamos en MascotaShop! 🛍️`;
 
       const enviado = await enviarNotificacionWhatsApp({
         telefono: telefono_cliente,
@@ -847,11 +979,11 @@ async function startServer() {
       });
 
       if (!enviado) {
-        return res.status(400).json({ error: 'No se pudo enviar el WhatsApp. Revisa que el teléfono esté correcto y dentro de la ventana de 24h del sandbox.' });
+        return res.status(400).json({ error: 'Cupón guardado en BD pero no se pudo enviar el WhatsApp.' });
       }
 
       console.log(`🎁 [Admin] Cupón ${codigo_cupon} enviado por WhatsApp a ${telefono_cliente}`);
-      return res.json({ success: true, message: 'Cupón enviado por WhatsApp.' });
+      return res.json({ success: true, message: 'Cupón guardado y enviado por WhatsApp.' });
 
     } catch (error: any) {
       console.error('❌ Error al enviar cupón por WhatsApp:', error.message);
@@ -859,7 +991,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/enviar-cupon', async (req, res) => {
+    app.post('/api/admin/enviar-cupon', async (req, res) => {
     try {
       const { correo_cliente, nombre_cliente, codigo_cupon, descuento } = req.body;
 
@@ -873,41 +1005,57 @@ async function startServer() {
       const { data: usuarioAuth } = await supabaseServerInstance.auth.admin.listUsers();
       const clienteEncontrado = usuarioAuth?.users.find(u => u.email === correo_cliente);
 
-      // 2. Interpretar el texto de descuento ("20% DE DESCUENTO" -> tipo + valor)
+      // 2. Parsear el descuento real desde la glosa del formulario
+      // Ej: '20% DE DESCUENTO' → tipo: porcentaje, valor: 20
+      // Ej: '5000 PESOS' → tipo: monto_fijo, valor: 5000
       const esPorcentaje = /%/.test(descuento || '');
-      const valorNumerico = parseFloat((descuento || '0').replace(/[^\d.]/g, '')) || 0;
+      const valorDescuento = parseFloat((descuento || '20').replace(/[^\d.]/g, '')) || 20;
 
-      // 3. Registrar el cupón en la base de datos (única fuente de verdad)
-      const { error: errorCupon } = await supabaseServerInstance
+      console.log(`🎁 [ADMIN CUPON] Guardando: ${codigo_cupon} | ${esPorcentaje ? 'porcentaje' : 'monto_fijo'} | valor: ${valorDescuento}`);
+
+      // 3. Registrar el cupón en la base de datos (única fuente de verdad) con 20% de descuento
+      const { data: cuponeData, error: errorCupon } = await supabaseServerInstance
         .from('cupones')
         .insert([{
           codigo: codigo_cupon,
           id_cliente: clienteEncontrado?.id || null,
           descuento_tipo: esPorcentaje ? 'porcentaje' : 'monto_fijo',
-          descuento_valor: valorNumerico,
-        }]);
+          descuento_valor: valorDescuento,
+        }])
+        .select();
 
       if (errorCupon) {
         // Código duplicado u otro error de validación: no enviamos el correo si no quedó registrado
-        console.error("❌ Error al registrar el cupón:", errorCupon.message);
+        console.error("❌ Error al registrar el cupón:", errorCupon.code, errorCupon.message, errorCupon.details);
         return res.status(400).json({ error: `No se pudo registrar el cupón: ${errorCupon.message}` });
       }
+
+      console.log(`✅ Cupón guardado exitosamente en Supabase:`, cuponeData);
 
       await transporter.sendMail({
         from: `"MascotaShop VIP 🏆" <${process.env.SMTP_USER}>`,
         to: correo_cliente,
-        subject: `¡Tienes un cupón de ${descuento || 'Descuento'} de regalo! 🎁`,
+        subject: `¡Tienes un cupón de 20% de DESCUENTO de regalo! 🎁`,
         html: `
           <div style="font-family: sans-serif; max-width: 600px; margin: auto; background-color: #0b1329; color: #ffffff; padding: 35px; border-radius: 20px; text-align: center;">
-            <span style="background-color: #f97316; color: white; padding: 6px 14px; border-radius: 9999px; font-size: 12px; font-weight: bold; text-transform: uppercase;">Beneficio Exclusivo</span>
+            <span style="background-color: #f97316; color: white; padding: 6px 14px; border-radius: 9999px; font-size: 12px; font-weight: bold; text-transform: uppercase;">Beneficio Exclusivo - 20% OFF</span>
             <h2 style="color: #10b981; margin-top: 20px; font-size: 24px;">¡Felicidades ${nombre_cliente || 'Cliente'}! 🏆</h2>
-            <p style="color: #94a3b8; font-size: 16px;">El administrador de MascotaShop te ha otorgado un beneficio especial premium.</p>
+            <p style="color: #94a3b8; font-size: 16px;">El administrador de MascotaShop te ha otorgado un descuento especial del <strong style="color: #f97316;">20%</strong> en tu próxima compra.</p>
             <div style="background-color: #1e293b; padding: 25px; border-radius: 14px; margin: 25px 0; border: 2px dashed #f97316;">
-              <p style="margin: 0; color: #94a3b8; font-size: 15px;">Tu cupón de **${descuento || 'Regalo'}** es:</p>
+              <p style="margin: 0; color: #94a3b8; font-size: 15px;">Tu código de cupón es:</p>
               <h1 style="margin: 12px 0; color: #f97316; letter-spacing: 5px; font-size: 32px;">${codigo_cupon}</h1>
-              <p style="margin: 0; color: #64748b; font-size: 12px;">Aplica este código al finalizar tu próximo carrito</p>
+              <p style="margin: 8px 0 0 0; color: #10b981; font-size: 14px; font-weight: bold;">✅ Descuento: 20% en tu próxima compra</p>
+              <p style="margin: 8px 0 0 0; color: #64748b; font-size: 12px;">Ingresa este código en el carrito al finalizar</p>
             </div>
-            <p style="font-size: 11px; color: #475569; margin-top: 20px;">Este beneficio es gestionado directamente por administración.</p>
+            <p style="color: #94a3b8; margin-top: 20px; font-size: 14px;"><strong>¿Cómo usarlo?</strong></p>
+            <ol style="color: #64748b; text-align: left; display: inline-block; font-size: 13px;">
+              <li>Agrega productos a tu carrito 🛒</li>
+              <li>En la sección "¿Tienes un cupón?", ingresa: <strong>${codigo_cupon}</strong></li>
+              <li>El descuento del 20% se aplicará automáticamente ✅</li>
+              <li>¡Paga normalmente! 💳</li>
+            </ol>
+            <hr style="border: 0; border-top: 1px solid #334155; margin: 20px 0;">
+            <p style="font-size: 11px; color: #475569; margin: 0;">Este cupón es válido en una única compra y es intransferible. Si tienes dudas, contáctanos.</p>
           </div>
         `,
       });

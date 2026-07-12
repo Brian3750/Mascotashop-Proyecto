@@ -8,7 +8,7 @@ export default function AdminPanel() {
   // 1. COMPROBAR EL ENTORNO: Lee si ejecutaste "npm run dev:admin"
   const isCustomAdminMode = import.meta.env.VITE_ADMIN_MODE === 'true';
 
-  const [activeTab, setActiveTab] = useState<'analytics' | 'pedidos' | 'inventario' | 'nuevo'>('analytics');
+  const [activeTab, setActiveTab] = useState<'analytics' | 'pedidos' | 'inventario' | 'nuevo' | 'mensajes'>('analytics');
   const [pedidos, setPedidos] = useState<any[]>([]);
   const [productos, setProductos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,6 +49,10 @@ export default function AdminPanel() {
   });
   const [sendingCoupon, setSendingCoupon] = useState(false);
   const [modalNotif, setModalNotif] = useState<{ pedido: any; telefono: string } | null>(null);
+
+  // Estado formulario mensajes directos WhatsApp
+  const [mensajeForm, setMensajeForm] = useState({ telefono: '', nombre: '', mensaje: '' });
+  const [enviandoMensaje, setEnviandoMensaje] = useState(false);
 
   // Verificar si ya existía una sesión administrativa activa en este navegador
   useEffect(() => {
@@ -168,9 +172,9 @@ export default function AdminPanel() {
       if (!res.ok) throw new Error(data.error);
 
       if (data.whatsappEnviado) {
-        alert(`✅ Pedido #${pedido.id_venta} marcado como listo.\n📧 Correo enviado.\n📲 WhatsApp enviado al cliente.`);
+        alert(`✅ Pedido #${pedido.id_venta} marcado como listo.\n📧 Correo enviado.\n📲 WhatsApp enviado por Twilio.`);
       } else {
-        alert(`✅ Pedido #${pedido.id_venta} marcado como listo. Correo enviado.\n⚠️ El WhatsApp no se pudo enviar (sin teléfono o fuera de la ventana de 24h del sandbox de Twilio).`);
+        alert(`✅ Pedido #${pedido.id_venta} marcado como listo. Correo enviado.\n⚠️ WhatsApp no enviado — revisa que el número esté dentro de la ventana de 24h del sandbox.`);
       }
       fetchData();
     } catch (error: any) {
@@ -250,6 +254,35 @@ export default function AdminPanel() {
     }
   };
 
+  const handleEnviarMensajeDirecto = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mensajeForm.telefono || !mensajeForm.mensaje) {
+      alert('Completa el teléfono y el mensaje.');
+      return;
+    }
+    setEnviandoMensaje(true);
+    try {
+      const nombre = mensajeForm.nombre ? `*${mensajeForm.nombre}*` : 'cliente';
+      const mensajeFinal = mensajeForm.mensaje
+        .replace('{nombre}', nombre)
+        .replace('{NOMBRE}', nombre);
+
+      const res = await fetch(`${API}/api/admin/test-whatsapp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telefono: mensajeForm.telefono, mensaje: mensajeFinal }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      alert(`✅ Mensaje enviado por WhatsApp a ${mensajeForm.telefono}`);
+      setMensajeForm({ telefono: '', nombre: '', mensaje: '' });
+    } catch (error: any) {
+      alert(`⚠️ No se pudo enviar: ${error.message}`);
+    } finally {
+      setEnviandoMensaje(false);
+    }
+  };
+
   const correrMotorRFM = async () => {
     try {
       const { error } = await supabase.rpc('calcular_segmentacion_rfm');
@@ -308,13 +341,15 @@ export default function AdminPanel() {
           nombre_cliente: couponForm.nombre_cliente,
           codigo_cupon: couponForm.codigo_cupon,
           descuento: couponForm.descuento,
+          correo_cliente: couponForm.correo_cliente || '',
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      alert(`✅ Cupón enviado por WhatsApp a ${couponForm.telefono_cliente}`);
+      alert(`✅ Cupón ${couponForm.codigo_cupon} guardado en BD y enviado por WhatsApp a ${couponForm.telefono_cliente}`);
+      setCouponForm({ ...couponForm, correo_cliente: '', nombre_cliente: '', telefono_cliente: '', codigo_cupon: generarCodigoCupon() });
     } catch (error: any) {
-      alert(`⚠️ No se pudo enviar el WhatsApp: ${error.message}`);
+      alert(`⚠️ Error: ${error.message}`);
     } finally {
       setSendingCoupon(false);
     }
@@ -421,6 +456,12 @@ export default function AdminPanel() {
                 className={`rounded-2xl px-4 py-2.5 text-sm font-bold transition ${activeTab === 'nuevo' ? 'bg-orange-500 text-white shadow-lg' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
               >
                 + Nuevo
+              </button>
+              <button
+                onClick={() => setActiveTab('mensajes')}
+                className={`rounded-2xl px-4 py-2.5 text-sm font-bold transition ${activeTab === 'mensajes' ? 'bg-emerald-600 text-white shadow-lg' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                💬 Mensajes
               </button>
             </div>
           </div>
@@ -827,6 +868,95 @@ export default function AdminPanel() {
                 >
                   Confirmar e Ingresar al Sistema de Sucursal
                 </button>
+              </form>
+            </section>
+          )}
+
+          {/* 💬 VISTA DE MENSAJES WHATSAPP DIRECTO */}
+          {activeTab === 'mensajes' && (
+            <section className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm animate-in fade-in duration-300">
+              <div className="mb-6">
+                <div className="flex items-center gap-3 mb-1">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <h2 className="text-2xl font-bold text-slate-900">Mensajes WhatsApp Directo</h2>
+                </div>
+                <p className="text-slate-500 text-sm mt-1">
+                  Envía un mensaje personalizado a cualquier cliente directamente por WhatsApp vía Twilio.
+                  Usa <code className="bg-slate-100 px-1.5 py-0.5 rounded text-orange-600 text-xs">{'{nombre}'}</code> en el mensaje para insertar el nombre automáticamente.
+                </p>
+              </div>
+
+              <form onSubmit={handleEnviarMensajeDirecto} className="space-y-5">
+
+                {/* Fila teléfono + nombre */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-slate-600 uppercase">📱 Teléfono (WhatsApp) *</label>
+                    <input
+                      type="tel"
+                      placeholder="945685662"
+                      value={mensajeForm.telefono}
+                      onChange={e => setMensajeForm({ ...mensajeForm, telefono: e.target.value })}
+                      className="rounded-2xl border border-slate-200 p-3.5 outline-none focus:border-emerald-500 bg-slate-50 text-sm transition font-mono tracking-widest"
+                      required
+                    />
+                    <p className="text-[11px] text-slate-400">Sin +56 ni espacios. Ej: 945685662</p>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-slate-600 uppercase">👤 Nombre del cliente</label>
+                    <input
+                      type="text"
+                      placeholder="Ej. Brian"
+                      value={mensajeForm.nombre}
+                      onChange={e => setMensajeForm({ ...mensajeForm, nombre: e.target.value })}
+                      className="rounded-2xl border border-slate-200 p-3.5 outline-none focus:border-emerald-500 bg-slate-50 text-sm transition"
+                    />
+                    <p className="text-[11px] text-slate-400">Opcional — se inserta donde uses {'{nombre}'}</p>
+                  </div>
+                </div>
+
+                {/* Mensaje */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-slate-600 uppercase">💬 Mensaje *</label>
+                  <textarea
+                    rows={5}
+                    placeholder={`Hola {nombre}! 🐾 Te escribimos desde MascotaShop para avisarte que...`}
+                    value={mensajeForm.mensaje}
+                    onChange={e => setMensajeForm({ ...mensajeForm, mensaje: e.target.value })}
+                    className="rounded-2xl border border-slate-200 p-3.5 outline-none focus:border-emerald-500 bg-slate-50 text-sm transition resize-none"
+                    required
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    Puedes usar *negrita* y _cursiva_ en WhatsApp.
+                  </p>
+                </div>
+
+                {/* Preview */}
+                {mensajeForm.mensaje && (
+                  <div className="rounded-2xl bg-emerald-50 border border-emerald-100 p-4">
+                    <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-2">Preview del mensaje</p>
+                    <p className="text-sm text-slate-700 whitespace-pre-wrap">
+                      {mensajeForm.mensaje
+                        .replace('{nombre}', mensajeForm.nombre ? `*${mensajeForm.nombre}*` : 'cliente')
+                        .replace('{NOMBRE}', mensajeForm.nombre ? `*${mensajeForm.nombre}*` : 'cliente')
+                      }
+                    </p>
+                  </div>
+                )}
+
+                {/* Botón */}
+                <button
+                  type="submit"
+                  disabled={enviandoMensaje}
+                  className="w-full rounded-2xl bg-emerald-600 py-4 font-bold text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-700 transition tracking-wide text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {enviandoMensaje ? '📲 Enviando...' : '📲 Enviar por WhatsApp (Twilio)'}
+                </button>
+
+                {/* Aviso sandbox */}
+                <div className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3 text-xs text-amber-700">
+                  ⚠️ <strong>Sandbox de Twilio:</strong> el cliente debe haber mandado <code className="bg-amber-100 px-1 rounded">join food-across</code> al <strong>+1 415 523 8886</strong> y haberle respondido en las últimas 24 horas para recibir mensajes libres.
+                </div>
               </form>
             </section>
           )}

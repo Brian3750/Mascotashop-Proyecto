@@ -26,7 +26,7 @@ export const PRODUCTS: Product[] = [
     price: 30000,
     image: "/images/Master-Dog-Adulto-Carne.png",
     description: "Nutrición balanceada para perros adultos de todas las razas.",
-    stock: 0
+    stock: 10
   },
   {
     id: "p2",
@@ -35,16 +35,16 @@ export const PRODUCTS: Product[] = [
     price: 6900,
     image: "/images/Snack-de-Pollo-Deshidratado.webp",
     description: "Ayuda a mantener contento a tu perro.",
-    stock: 0
+    stock: 8
   },
-    {
+  {
     id: "p3",
     name: "Cama tipo sofa para Perros",
     category: "perros",
     price: 15000,
-      image: "/images/Cama-tipo-sofa.webp",
+    image: "/images/Cama-tipo-sofa.webp",
     description: "Tu perro podra dormir cómodo.",
-    stock: 0
+    stock: 5
   },
   // GATOS
   {
@@ -54,7 +54,7 @@ export const PRODUCTS: Product[] = [
     price: 9890,
     image: "/images/arena.webp",
     description: "Con esta arena no tendra ni una preocupacion.",
-    stock: 0
+    stock: 12
   },
   {
     id: "g2",
@@ -63,7 +63,7 @@ export const PRODUCTS: Product[] = [
     price: 5690,
     image: "/images/master-cat.png",
     description: "La mejor comida para tu gato.",
-    stock: 0
+    stock: 9
   },
   {
     id: "g3",
@@ -72,7 +72,7 @@ export const PRODUCTS: Product[] = [
     price: 9990,
     image: "/images/churu-variedades.jpg",
     description: "Pack ahorro con 20 tubos de Churu.",
-    stock: 0
+    stock: 7
   },
   // HAMSTER
   {
@@ -82,25 +82,25 @@ export const PRODUCTS: Product[] = [
     price: 4500,
     image: "/images/comida-hamster.jpg",
     description: "Variedad de granos y semillas para una dieta completa.",
-    stock: 0
+    stock: 6
   },
-   {
+  {
     id: "h2",
     name: "Bola Esfera Para Rodar Hámster,15 Cm",
     category: "hamster",
     price: 5000,
     image: "/images/Bola-ejercicio.webp",
     description: "Distracción para tu hamster.",
-    stock: 0
+    stock: 4
   },
-   {
+  {
     id: "h3",
     name: "Tobogán con guarida para hamster pequeño",
     category: "hamster",
     price: 3500,
     image: "/images/Tobogan-hamster.webp",
     description: "Mucha diversión para tu hamster.",
-    stock: 0
+    stock: 3
   },
   // CONEJOS
   {
@@ -110,53 +110,53 @@ export const PRODUCTS: Product[] = [
     price: 3000,
     image: "/images/heno-peludos.jpg",
     description: "Heno fresco y crujiente para conejos.",
-    stock: 0
+    stock: 6
   },
-   {
+  {
     id: "c2",
     name: "Jaula Para Conejos Con Rampa-comedero-bebedero",
     category: "conejos",
     price: 60000,
     image: "/images/Jaula-para-conejos.webp",
     description: "La mejor comodidad para tu conejo.",
-    stock: 0
+    stock: 2
   },
-   {
+  {
     id: "c3",
     name: "Jaula Para Conejos Con Rampa-comedero-bebedero",
     category: "conejos",
     price: 15000,
     image: "/images/Tunel-para-conejos.jpeg",
     description: "Mucha divercion para tu conejo.",
-    stock: 0
+    stock: 4
   },
   // PECES
   {
-    id: "p1",
+    id: "p1-peces",
     name: "Kit Pecera para Principiantes 1.5 Galones (22x15x25 cm) | Plástico PET Duradero, Bomba Ultra Silenciosa y LED USB",
     category: "peces",
     price: 60000,
     image: "/images/Kit-pecera.webp",
     description: "La mejor opcion si quieres empezar con una pecera.",
-    stock: 0
+    stock: 3
   },
-   {
-    id: "p2",
+  {
+    id: "p2-peces",
     name: "Alimento para Peces",
     category: "peces",
     price: 3250,
     image: "/images/alimento-peces.webp",
     description: "Alimento flotante que no enturbia el agua.",
-    stock: 0
+    stock: 8
   },
-     {
-    id: "p3",
+  {
+    id: "p3-peces",
     name: "Red Hagen para peces 20 x 15 cm",
     category: "peces",
     price: 5990,
     image: "/images/Red-peces-acuario.jpeg",
     description: "Red para peces tu mejor opcion.",
-    stock: 0
+    stock: 5
   },
   // AVES
   {
@@ -166,24 +166,24 @@ export const PRODUCTS: Product[] = [
     price: 2800,
     image: "/images/comida-aves.png",
     description: "El mejor alimento para tu catita.",
-    stock: 0
+    stock: 7
   },
-    {
+  {
     id: "a2",
     name: "Jaula para Aves Pinzón Periquito (47x36x35 cm) Celeste",
     category: "aves",
     price: 25000,
     image: "/images/jaula-aves.webp",
     description: "El mejor alimento para tu catita.",
-    stock: 0
+    stock: 4
   },
-      {
+  {
     id: "a3",
     name: "Recipiente Para Agua o Alimento De Pájaros",
     category: "aves",
     price: 2500,
     image: "/images/bebedor-agua-aves.webp",
     description: "El mejor alimento para tu catita.",
-    stock: 0
+    stock: 6
   },
 ];

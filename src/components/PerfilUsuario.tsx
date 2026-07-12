@@ -67,7 +67,7 @@ export default function PerfilUsuario() {
     setLoadingCompras(true);
     try {
       const respuesta = await fetch(
-        `http://localhost:3000/api/usuario/compras?id_usuario=${userInfo.id}`
+        `${window.location.origin}/api/usuario/compras?id_usuario=${userInfo.id}`
       );
       if (respuesta.ok) {
         const datos = await respuesta.json();
@@ -85,7 +85,7 @@ export default function PerfilUsuario() {
     setLoadingClicks(true);
     try {
       const respuesta = await fetch(
-        `http://localhost:3000/api/usuario/clicks?id_usuario=${userInfo.id}`
+        `${window.location.origin}/api/usuario/clicks?id_usuario=${userInfo.id}`
       );
       if (respuesta.ok) {
         const datos = await respuesta.json();
@@ -167,7 +167,7 @@ export default function PerfilUsuario() {
       let totalClicks = 0;
       try {
         const respuestaEstadisticas = await fetch(
-          `http://localhost:3000/api/usuario/estadisticas?id_usuario=${user.id}`
+          `${window.location.origin}/api/usuario/estadisticas?id_usuario=${user.id}`
         );
         if (respuestaEstadisticas.ok) {
           const datosEstadisticas = await respuestaEstadisticas.json();

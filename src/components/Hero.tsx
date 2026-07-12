@@ -22,7 +22,7 @@ export default function Hero({ onViewCatalog, onAddToCart }: HeroProps) {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   const filteredProducts = selectedCategory
-    ? PRODUCTS.filter((p) => p.category === selectedCategory)
+    ? PRODUCTS.filter((p) => p.category === selectedCategory && p.stock > 0)
     : [];
 
   return (
@@ -110,38 +110,48 @@ export default function Hero({ onViewCatalog, onAddToCart }: HeroProps) {
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                  {filteredProducts.map((product) => (
-                    <motion.div
-                      key={product.id}
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="group bg-gray-50 rounded-2xl p-4 hover:bg-white hover:shadow-md transition-all border border-transparent hover:border-orange-100"
-                    >
-                      <div className="aspect-square rounded-xl overflow-hidden mb-4 bg-white">
-                        <img
-                          src={product.image}
-                          alt={product.name}
-                          className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                          referrerPolicy="no-referrer"
-                        />
-                      </div>
-                      <h3 className="font-bold text-gray-900 mb-1 line-clamp-1">{product.name}</h3>
-                      <p className="text-xs text-gray-500 mb-3 line-clamp-2">{product.description}</p>
-                      <div className="flex items-center justify-between">
-                        <span className="text-lg font-extrabold text-orange-600">
-                          {formatCLP(product.price)}
-                        </span>
-                        <button 
-                          onClick={() => onAddToCart(product)}
-                          className="bg-orange-500 text-white p-2 rounded-lg hover:bg-orange-600 transition-colors"
-                        >
-                          <ShoppingCart className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
+                {filteredProducts.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                    {filteredProducts.map((product) => (
+                      <motion.div
+                        key={product.id}
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        onClick={() => onAddToCart(product)}
+                        className="group cursor-pointer bg-gray-50 rounded-2xl p-4 hover:bg-white hover:shadow-md transition-all border border-transparent hover:border-orange-100"
+                      >
+                        <div className="aspect-square rounded-xl overflow-hidden mb-4 bg-white">
+                          <img
+                            src={product.image}
+                            alt={product.name}
+                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                            referrerPolicy="no-referrer"
+                          />
+                        </div>
+                        <h3 className="font-bold text-gray-900 mb-1 line-clamp-1">{product.name}</h3>
+                        <p className="text-xs text-gray-500 mb-3 line-clamp-2">{product.description}</p>
+                        <div className="flex items-center justify-between">
+                          <span className="text-lg font-extrabold text-orange-600">
+                            {formatCLP(product.price)}
+                          </span>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAddToCart(product);
+                            }}
+                            className="bg-orange-500 text-white p-2 rounded-lg hover:bg-orange-600 transition-colors"
+                          >
+                            <ShoppingCart className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-orange-200 bg-orange-50 px-6 py-10 text-center text-sm text-gray-600">
+                    No hay productos disponibles en esta categoría por el momento.
+                  </div>
+                )}
               </div>
             </motion.div>
           )}

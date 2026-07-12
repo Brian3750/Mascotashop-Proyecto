@@ -10,7 +10,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss()],
 
     define: {
-      'process.env.API_URL': JSON.stringify(env.VITE_API_URL || 'http://localhost:3000'),
+      'process.env.API_URL': JSON.stringify(env.VITE_API_URL || process.env.VITE_API_URL || 'http://localhost:3000'),
       'process.env.APP_VERSION': JSON.stringify(process.env.npm_package_version),
     },
 

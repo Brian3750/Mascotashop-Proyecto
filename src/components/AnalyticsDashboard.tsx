@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import { Chart, registerables } from 'chart.js';
 Chart.register(...registerables);
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const API = import.meta.env.VITE_API_URL || window.location.origin;
 
 // Colores para segmentos RFM (usados en gráficos y badges)
 const RFM_COLORS: Record<string, string> = {

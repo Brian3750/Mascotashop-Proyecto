@@ -18,7 +18,7 @@ export const registrarInteraccionMongo = async (evento: string, producto: any) =
 
     // CORRECCIÓN: Usamos la URL absoluta con el puerto 3000 de Express de forma explícita
     // Esto evita que Vite intente resolver la ruta internamente y tire el 404
-    const respuesta = await fetch('http://localhost:3000/api/trazabilidad', {
+    const respuesta = await fetch(`${window.location.origin}/api/trazabilidad`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

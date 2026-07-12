@@ -4,11 +4,10 @@ import Hero from "./components/Hero";
 import LoginModal from "./components/LoginModal";
 import CartDrawer, { CartItem } from "./components/CartDrawer";
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const API = import.meta.env.VITE_API_URL || window.location.origin;
 import RegistroMascota from './components/RegistroMascota'; 
 import UserProfile from './components/PerfilUsuario';
 import TicketPago from "./components/TicketPago"; 
-import WhatsAppButton from './components/WhatsAppButton'; 
 import AdminPanel from './components/AdminPanel'; 
 import { PRODUCTS as LOCAL_PRODUCTS, Product } from "./data/products"; 
 import { formatCLP } from "./lib/utils";
@@ -322,13 +321,17 @@ export default function App() {
     }
   };
 
+  const availableProducts = useMemo(() => {
+    return products.filter((p) => p.stock > 0);
+  }, [products]);
+
   const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
+    return availableProducts.filter((p) => {
       const matchesSearch = p.name.toLowerCase().includes(activeSearch.toLowerCase());
       const matchesFilter = selectedFilter === "all" || p.category === selectedFilter;
       return matchesSearch && matchesFilter;
     });
-  }, [activeSearch, selectedFilter, products]);
+  }, [activeSearch, selectedFilter, availableProducts]);
 
   const addToCart = (product: Product) => {
     if (product.stock <= 0) {
@@ -366,7 +369,7 @@ export default function App() {
             </button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
-            {products.slice(0, 4).map((p) => (
+            {availableProducts.slice(0, 4).map((p) => (
               <ProductCard key={p.id} product={p} onAdd={() => addToCart(p)} />
             ))}
           </div>
@@ -487,7 +490,7 @@ export default function App() {
                 <h4 className="font-bold mb-6 uppercase tracking-widest text-xs text-orange-500">Contacto</h4>
                 <div className="space-y-4 text-sm text-gray-400">
                   <div className="flex items-center gap-3"><MapPin className="h-4 w-4 text-orange-500" /> Av. Pajaritos, Maipú, Chile</div>
-                  <div className="flex items-center gap-3"><Phone className="h-4 w-4 text-orange-500" /> +56 9 1234 5678</div>
+                  <div className="flex items-center gap-3"><Phone className="h-4 w-4 text-orange-500" /> +56 9 4568 5662</div>
                   <div className="flex items-center gap-3"><Mail className="h-4 w-4 text-orange-500" /> contacto@mascotashop.cl</div>
                 </div>
               </div>
@@ -504,8 +507,6 @@ export default function App() {
               PROYECTO BRIAN CONTRERAS — INACAP 2026
             </div>
           </footer>
-
-          <WhatsAppButton /> 
         </>
       )}
 

@@ -32,6 +32,43 @@ export default function CartDrawer({
 }: CartDrawerProps) {
   const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const [codigoCupon, setCodigoCupon] = React.useState('');
+  const [cuponValidado, setCuponValidado] = React.useState<{ tipo: string; valor: number; codigo: string } | null>(null);
+  const [cuponError, setCuponError] = React.useState('');
+  const [validandoCupon, setValidandoCupon] = React.useState(false);
+
+  const API = import.meta.env.VITE_API_URL || window.location.origin;
+
+  const validarCupon = async () => {
+    if (!codigoCupon.trim()) return;
+    setValidandoCupon(true);
+    setCuponError('');
+    setCuponValidado(null);
+    try {
+      const res = await fetch(`${API}/api/validar-cupon`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ codigo: codigoCupon.trim().toUpperCase() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCuponError(data.error || 'Cupón inválido');
+      } else {
+        setCuponValidado({ tipo: data.descuento_tipo, valor: data.descuento_valor, codigo: data.codigo });
+      }
+    } catch {
+      setCuponError('Error de conexión al validar el cupón');
+    } finally {
+      setValidandoCupon(false);
+    }
+  };
+
+  const calcularDescuento = () => {
+    if (!cuponValidado) return 0;
+    if (cuponValidado.tipo === 'monto_fijo') return Math.min(cuponValidado.valor, total);
+    return total * (cuponValidado.valor / 100);
+  };
+
+  const totalConDescuento = total - calcularDescuento();
 
   // =========================================================================
   // 🔥 MANEJADOR DE INCREMENTO CON CONTROL DE STOCK CENTRALIZADO
@@ -200,22 +237,61 @@ export default function CartDrawer({
                   <label className="text-xs font-bold text-gray-500 uppercase tracking-wide">
                     ¿Tienes un cupón?
                   </label>
-                  <input
-                    type="text"
-                    value={codigoCupon}
-                    onChange={(e) => setCodigoCupon(e.target.value.toUpperCase())}
-                    placeholder="Ej: VIP-MASC-2026"
-                    disabled={isProcessing}
-                    className="mt-1 w-full px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-mono tracking-wider outline-none focus:border-orange-500"
-                  />
-                  <p className="text-[11px] text-gray-400 mt-1">
-                    El descuento se valida y aplica al iniciar el pago.
-                  </p>
+                  <div className="flex gap-2 mt-1">
+                    <input
+                      type="text"
+                      value={codigoCupon}
+                      onChange={(e) => {
+                        setCodigoCupon(e.target.value.toUpperCase());
+                        setCuponValidado(null);
+                        setCuponError('');
+                      }}
+                      placeholder="Ej: VIP-MASC-2026"
+                      disabled={isProcessing || validandoCupon}
+                      className="flex-1 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-mono tracking-wider outline-none focus:border-orange-500"
+                    />
+                    <button
+                      onClick={validarCupon}
+                      disabled={!codigoCupon.trim() || validandoCupon || isProcessing}
+                      className="px-3 py-2 bg-orange-500 text-white text-xs font-bold rounded-xl hover:bg-orange-600 transition disabled:opacity-40"
+                    >
+                      {validandoCupon ? '...' : 'Aplicar'}
+                    </button>
+                  </div>
+
+                  {/* Feedback del cupón */}
+                  {cuponError && (
+                    <p className="text-[11px] text-red-500 mt-1 font-medium">❌ {cuponError}</p>
+                  )}
+                  {cuponValidado && (
+                    <p className="text-[11px] text-emerald-600 mt-1 font-medium">
+                      ✅ Cupón válido — {cuponValidado.tipo === 'monto_fijo' ? `$${cuponValidado.valor.toLocaleString('es-CL')} de descuento` : `${cuponValidado.valor}% de descuento`}
+                    </p>
+                  )}
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-gray-500 font-medium">Subtotal</span>
-                  <span className="text-2xl font-black text-gray-900">{formatCLP(total)}</span>
+
+                {/* Resumen de precios */}
+                <div className="space-y-2 bg-white rounded-xl p-4 border border-gray-100">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Subtotal</span>
+                    <span className="text-sm font-bold text-gray-900">{formatCLP(total)}</span>
+                  </div>
+
+                  {cuponValidado && (
+                    <div className="flex justify-between items-center text-emerald-600">
+                      <span className="text-sm font-semibold">🎁 Descuento ({cuponValidado.tipo === 'monto_fijo' ? `$${cuponValidado.valor.toLocaleString('es-CL')}` : `${cuponValidado.valor}%`})</span>
+                      <span className="text-sm font-bold">-{formatCLP(calcularDescuento())}</span>
+                    </div>
+                  )}
+
+                  <div className={`flex justify-between items-center px-3 py-2 rounded-lg border mt-1 ${cuponValidado ? 'bg-emerald-50 border-emerald-200' : 'bg-orange-50 border-orange-200'}`}>
+                    <span className={`text-sm font-bold ${cuponValidado ? 'text-emerald-900' : 'text-orange-900'}`}>Total a Pagar</span>
+                    <span className={`text-lg font-black ${cuponValidado ? 'text-emerald-600' : 'text-orange-600'}`}>
+                      {formatCLP(cuponValidado ? totalConDescuento : total)}
+                    </span>
+                  </div>
                 </div>
+                
                 <p className="text-xs text-gray-400 text-center">
                   Transacción procesada vía Supabase
                 </p>
