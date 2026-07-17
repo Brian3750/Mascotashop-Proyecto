@@ -5,7 +5,7 @@ import express from "express";
 import { getSupabaseServer } from './src/lib/supabaseServer'; 
 import { createServer as createViteServer } from "vite";
 import path from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import pkg from 'transbank-sdk';
 import { createClient } from '@supabase/supabase-js';
 import { MongoClient } from 'mongodb';
@@ -83,7 +83,7 @@ async function enviarNotificacionWhatsApp(datosTicket: any) {
   }
 }
 
-async function startServer() {
+export async function createApp() {
   const app = express();
   const PORT = 3000;
   app.use(express.urlencoded({ extended: true }));
@@ -1003,7 +1003,7 @@ async function startServer() {
 
       // 1. Buscar el id del cliente a partir del correo (vía Supabase Auth)
       const { data: usuarioAuth } = await supabaseServerInstance.auth.admin.listUsers();
-      const clienteEncontrado = usuarioAuth?.users.find(u => u.email === correo_cliente);
+      const clienteEncontrado = usuarioAuth?.users.find((u: { email?: string }) => u.email === correo_cliente);
 
       // 2. Parsear el descuento real desde la glosa del formulario
       // Ej: '20% DE DESCUENTO' → tipo: porcentaje, valor: 20
@@ -1222,8 +1222,34 @@ async function startServer() {
     console.error("⚠️ Error crítico inicial: La persistencia NoSQL falló:", err.message);
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Servidor Express escuchando en http://localhost:${PORT}`);
+  return app;
+}
+
+export async function startServer() {
+  const app = await createApp();
+  const preferredPort = Number(process.env.PORT || 3000);
+  const initialPort = Number.isNaN(preferredPort) || preferredPort <= 0 ? 0 : preferredPort;
+
+  return new Promise((resolve, reject) => {
+    const tryListen = (portToTry: number) => {
+      const server = app.listen(portToTry, "0.0.0.0", () => {
+        const actualPort = (server.address() as any)?.port ?? portToTry;
+        console.log(`🚀 Servidor Express escuchando en http://localhost:${actualPort}`);
+        resolve(server);
+      });
+
+      server.on('error', (error: NodeJS.ErrnoException) => {
+        if (error.code === 'EADDRINUSE' && portToTry !== 0) {
+          console.warn(`⚠️ Puerto ${portToTry} ocupado, intentando un puerto libre...`);
+          server.close();
+          tryListen(0);
+        } else {
+          reject(error);
+        }
+      });
+    };
+
+    tryListen(initialPort);
   });
 }
 
@@ -1235,7 +1261,11 @@ process.on('unhandledRejection', (reason) => {
   console.error('❌ Unhandled Rejection:', reason);
 });
 
-startServer().catch((err) => {
-  console.error('❌ Error al iniciar el servidor:', err && err.stack ? err.stack : err);
-  process.exit(1);
-});
+const isDirectRun = typeof process.argv[1] === 'string' && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (!process.env.VERCEL && isDirectRun) {
+  startServer().catch((err) => {
+    console.error('❌ Error al iniciar el servidor:', err && err.stack ? err.stack : err);
+    process.exit(1);
+  });
+}

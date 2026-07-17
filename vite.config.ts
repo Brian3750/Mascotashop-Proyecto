@@ -28,7 +28,7 @@ export default defineConfig(({ mode }) => {
 
     build: {
       target: 'ES2020',
-      minify: 'terser',
+      minify: 'esbuild',
       cssCodeSplit: true,
       sourcemap: process.env.VITE_SOURCE_MAP === 'true',
       reportCompressedSize: false,

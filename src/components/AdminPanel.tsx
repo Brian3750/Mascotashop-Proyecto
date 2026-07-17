@@ -135,7 +135,7 @@ export default function AdminPanel() {
     setPassword('');
   };
 
-  const API = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+  const API = import.meta.env.VITE_API_URL || window.location.origin;
 
   const cambiarEstadoPedido = async (id_venta: string, estado: string) => {
     try {
