@@ -1,10 +1,31 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { getSupabaseServer } from "../../src/lib/supabaseServer";
 import { transporter } from "../_lib/mailer";
+import { enviarNotificacionWhatsApp } from "../_lib/whatsapp";
 
+// Endpoint combinado: antes eran dos funciones separadas (enviar-cupon por correo
+// y enviar-cupon-whatsapp). Se unieron en una sola para no superar el límite de 12
+// funciones serverless del plan Hobby de Vercel. El canal se decide según qué
+// dato de contacto llega en el body (correo_cliente -> email, telefono_cliente -> WhatsApp).
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Método no permitido" });
 
+  const { correo_cliente, telefono_cliente, canal } = req.body || {};
+
+  if (canal === "whatsapp") return enviarPorWhatsApp(req, res);
+  if (canal === "email") return enviarPorCorreo(req, res);
+
+  // Respaldo por si no llega 'canal' explícito (compatibilidad hacia atrás)
+  if (telefono_cliente) {
+    return enviarPorWhatsApp(req, res);
+  }
+  if (correo_cliente) {
+    return enviarPorCorreo(req, res);
+  }
+  return res.status(400).json({ error: "Faltan datos obligatorios (Correo o Teléfono del cliente)" });
+}
+
+async function enviarPorCorreo(req: VercelRequest, res: VercelResponse) {
   try {
     const { correo_cliente, nombre_cliente, codigo_cupon, descuento } = req.body || {};
 
@@ -73,6 +94,79 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.json({ success: true, message: "Cupón enviado exitosamente al cliente." });
   } catch (error: any) {
     console.error("❌ Error al enviar cupón desde el panel:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+async function enviarPorWhatsApp(req: VercelRequest, res: VercelResponse) {
+  try {
+    const { telefono_cliente, nombre_cliente, codigo_cupon, descuento, correo_cliente } = req.body || {};
+
+    if (!telefono_cliente || !codigo_cupon) {
+      return res.status(400).json({ error: "Faltan datos obligatorios (Teléfono o Código)" });
+    }
+
+    const supabaseServerInstance = getSupabaseServer();
+
+    let idCliente = null;
+    if (correo_cliente) {
+      const { data: usuarioAuth } = await supabaseServerInstance.auth.admin.listUsers();
+      const clienteEncontrado = usuarioAuth?.users.find((u: any) => u.email === correo_cliente);
+      idCliente = clienteEncontrado?.id || null;
+    }
+
+    const esPorcentaje = /%/.test(descuento || "");
+    const valorDescuento = parseFloat((descuento || "20").replace(/[^\d.]/g, "")) || 20;
+
+    const { data: cuponExistente } = await supabaseServerInstance.from("cupones").select("id_cupon").eq("codigo", codigo_cupon).maybeSingle();
+
+    if (!cuponExistente) {
+      const { error: errorInsert } = await supabaseServerInstance.from("cupones").insert([
+        {
+          codigo: codigo_cupon,
+          id_cliente: idCliente,
+          descuento_tipo: esPorcentaje ? "porcentaje" : "monto_fijo",
+          descuento_valor: valorDescuento,
+        },
+      ]);
+
+      if (errorInsert) {
+        console.error("❌ Error al guardar cupón en BD:", errorInsert.message);
+        return res.status(400).json({ error: `No se pudo guardar el cupón: ${errorInsert.message}` });
+      }
+      console.log(`✅ Cupón ${codigo_cupon} guardado en Supabase.`);
+    } else {
+      console.log(`ℹ️ Cupón ${codigo_cupon} ya existía en la BD — no se duplica.`);
+    }
+
+    const nombre = nombre_cliente || "Amigo/a";
+    const descuentoTexto = esPorcentaje ? `*${valorDescuento}% DE DESCUENTO*` : `*$${valorDescuento.toLocaleString("es-CL")} de descuento*`;
+
+    const mensajeCupon =
+      `🎁 *MascotaShop* — Beneficio Exclusivo\n\n` +
+      `¡Hola *${nombre}*! Queremos consentir a tu mascota. 🐾\n\n` +
+      `Te regalamos un cupón de ${descuentoTexto}.\n\n` +
+      `🏷️ Código: *${codigo_cupon}*\n\n` +
+      `📝 Cómo usarlo:\n` +
+      `1️⃣ Agrega productos al carrito\n` +
+      `2️⃣ En "¿Tienes un cupón?" ingresa: ${codigo_cupon}\n` +
+      `3️⃣ El descuento se aplica automáticamente ✅\n` +
+      `4️⃣ ¡Paga normalmente! 💳\n\n` +
+      `¡Te esperamos en MascotaShop! 🛍️`;
+
+    const enviado = await enviarNotificacionWhatsApp({
+      telefono: telefono_cliente,
+      mensajePersonalizado: mensajeCupon,
+    });
+
+    if (!enviado) {
+      return res.status(400).json({ error: "Cupón guardado en BD pero no se pudo enviar el WhatsApp." });
+    }
+
+    console.log(`🎁 [Admin] Cupón ${codigo_cupon} enviado por WhatsApp a ${telefono_cliente}`);
+    return res.json({ success: true, message: "Cupón guardado y enviado por WhatsApp." });
+  } catch (error: any) {
+    console.error("❌ Error al enviar cupón por WhatsApp:", error.message);
     return res.status(500).json({ error: error.message });
   }
 }

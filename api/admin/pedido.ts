@@ -3,9 +3,45 @@ import { getSupabaseServer } from "../../src/lib/supabaseServer";
 import { transporter } from "../_lib/mailer";
 import { enviarNotificacionWhatsApp } from "../_lib/whatsapp";
 
+// Endpoint combinado: antes eran dos funciones separadas (pedido-estado y pedido-listo).
+// Se unieron en una sola para no superar el límite de 12 funciones serverless
+// del plan Hobby de Vercel. El campo "accion" en el body decide qué hacer.
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Método no permitido" });
 
+  const { accion } = req.body || {};
+
+  if (accion === "listo") {
+    return marcarPedidoListo(req, res);
+  }
+  if (accion === "estado") {
+    return cambiarEstado(req, res);
+  }
+  return res.status(400).json({ error: "Falta o es inválido el campo 'accion' (usa 'estado' o 'listo')." });
+}
+
+async function cambiarEstado(req: VercelRequest, res: VercelResponse) {
+  try {
+    const { id_venta, estado } = req.body || {};
+    if (!id_venta || !estado) return res.status(400).json({ error: "Faltan datos." });
+
+    const ESTADOS_VALIDOS = ["en preparación", "apartado", "listo para retiro", "completado"];
+    if (!ESTADOS_VALIDOS.includes(estado)) {
+      return res.status(400).json({ error: `Estado inválido: ${estado}` });
+    }
+
+    const supabaseServerInstance = getSupabaseServer();
+    const { error } = await supabaseServerInstance.from("ventas").update({ estado }).eq("id_venta", id_venta);
+
+    if (error) throw error;
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error("❌ Error al cambiar estado:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+async function marcarPedidoListo(req: VercelRequest, res: VercelResponse) {
   try {
     const { id_venta, id_cliente, nombre_cliente, correo_cliente, telefono_cliente, total_venta } = req.body || {};
 

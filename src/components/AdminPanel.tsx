@@ -135,10 +135,10 @@ export default function AdminPanel() {
 
   const cambiarEstadoPedido = async (id_venta: string, estado: string) => {
     try {
-      const res = await fetch(`${API}/api/admin/pedido-estado`, {
+      const res = await fetch(`${API}/api/admin/pedido`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id_venta, estado })
+        body: JSON.stringify({ accion: 'estado', id_venta, estado })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -152,10 +152,11 @@ export default function AdminPanel() {
   const notificarPedidoListo = async (pedido: any) => {
     const nombreC = pedido.perfiles ? `${pedido.perfiles.nombres} ${pedido.perfiles.apellidos}` : 'Cliente';
     try {
-      const res = await fetch(`${API}/api/admin/pedido-listo`, {
+      const res = await fetch(`${API}/api/admin/pedido`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          accion: 'listo',
           id_venta: pedido.id_venta,
           id_cliente: pedido.id_cliente,
           nombre_cliente: nombreC,
@@ -274,7 +275,7 @@ export default function AdminPanel() {
       const response = await fetch('/api/admin/enviar-cupon', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(couponForm)
+        body: JSON.stringify({ ...couponForm, canal: 'email' })
       });
 
       const resData = await response.json();
@@ -300,10 +301,11 @@ export default function AdminPanel() {
 
     setSendingCoupon(true);
     try {
-      const res = await fetch(`${API}/api/admin/enviar-cupon-whatsapp`, {
+      const res = await fetch(`${API}/api/admin/enviar-cupon`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          canal: 'whatsapp',
           telefono_cliente: couponForm.telefono_cliente,
           nombre_cliente: couponForm.nombre_cliente,
           codigo_cupon: couponForm.codigo_cupon,
