@@ -32,6 +32,17 @@ export default defineConfig(({ mode }) => {
       cssCodeSplit: true,
       sourcemap: process.env.VITE_SOURCE_MAP === 'true',
       reportCompressedSize: false,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'vendor-react': ['react', 'react-dom'],
+            'vendor-charts': ['recharts', 'chart.js'],
+            'vendor-supabase': ['@supabase/supabase-js'],
+            'vendor-motion': ['motion'],
+            'vendor-icons': ['lucide-react'],
+          },
+        },
+      },
     },
 
     preview: {
