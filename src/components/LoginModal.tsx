@@ -8,10 +8,11 @@ interface LoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  defaultMode?: "login" | "register";
 }
 
-export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalProps) {
-  const [mode, setMode] = useState<"login" | "register">("register"); // Por defecto en Registro para capturar datos
+export default function LoginModal({ isOpen, onClose, onSuccess, defaultMode = "register" }: LoginModalProps) {
+  const [mode, setMode] = useState<"login" | "register">(defaultMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [nombres, setNombres] = useState("");
@@ -20,6 +21,12 @@ export default function LoginModal({ isOpen, onClose, onSuccess }: LoginModalPro
   const [telefono, setTelefono] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Cada vez que el modal se abre, adoptamos el modo pedido por quien lo invocó
+  // (por ejemplo, /admin siempre debe abrir en "login", no en "register").
+  React.useEffect(() => {
+    if (isOpen) setMode(defaultMode);
+  }, [isOpen, defaultMode]);
 
   const resetFields = () => {
     setEmail(""); setPassword(""); setNombres(""); 

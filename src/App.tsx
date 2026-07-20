@@ -43,6 +43,9 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false); 
   const [products, setProducts] = useState<Product[]>([]);
   const [session, setSession] = useState<any>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [pathTick, setPathTick] = useState(0);
+  const [loginIntent, setLoginIntent] = useState<"customer" | "admin">("customer");
 
   // 📄 ESTADO DEL TICKET CON TU TIPADO ESTRICTO DE TYPESCRIPT
   const datosTicketInicialState = null;
@@ -69,6 +72,7 @@ export default function App() {
       setIsAdmin(true);
       setCurrentView('admin');
       window.history.pushState({}, '', '/admin');
+      setAuthReady(true);
       return; // Interrumpe la ejecución para que Supabase no pise el estado local
     }
 
@@ -79,6 +83,7 @@ export default function App() {
         setCurrentView('admin');
         window.history.pushState({}, '', '/admin');
       }
+      setAuthReady(true);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -87,15 +92,13 @@ export default function App() {
         setIsAdmin(true);
         setCurrentView('admin');
         window.history.pushState({}, '', '/admin');
+        setIsLoginOpen(false);
       } else {
         setIsAdmin(false);
         // CORRECCIÓN: Si venimos con parámetros de Transbank, evitamos que pise el renderizado a 'home'
         const params = new URLSearchParams(window.location.search);
-        if (!params.get('token_ws') && params.get('view') !== 'confirmacion') {
+        if (!params.get('token_ws') && params.get('view') !== 'confirmacion' && window.location.pathname !== '/admin') {
           setCurrentView('home');
-          if (window.location.pathname === '/admin') {
-            window.history.pushState({}, '', '/');
-          }
         }
       }
     });
@@ -126,34 +129,37 @@ export default function App() {
   useEffect(() => {
     // Si el bypass está activo, no sincronizar ni resetear la ruta con los estados de sesión vacíos
     if (import.meta.env.VITE_DEV_AUTO_ADMIN === "true") return;
+    // Esperamos a que se resuelva la sesión inicial antes de decidir nada,
+    // para no sacar al usuario de /admin por un falso negativo mientras carga.
+    if (!authReady) return;
 
-    const syncAdminRoute = () => {
-      if (window.location.pathname === '/admin') {
-        if (session && session.user?.email === ADMIN_EMAIL) {
-          setIsAdmin(true);
-          setCurrentView('admin');
-        } else {
-          setIsAdmin(false);
-          setCurrentView('home');
-          window.history.replaceState({}, document.title, '/');
-        }
-      }
-    };
-
-    syncAdminRoute();
-
-    const handlePopState = () => {
-      if (window.location.pathname === '/admin') {
-        syncAdminRoute();
-      } else {
+    if (window.location.pathname === '/admin') {
+      if (session && session.user?.email === ADMIN_EMAIL) {
+        setIsAdmin(true);
+        setCurrentView('admin');
+        setIsLoginOpen(false);
+      } else if (session) {
+        // Hay una sesión iniciada, pero no es la cuenta de administrador
+        alert('Esta cuenta no tiene permisos de administrador.');
         setIsAdmin(false);
         setCurrentView('home');
+        window.history.replaceState({}, document.title, '/');
+      } else {
+        // No hay sesión: dejamos la URL en /admin y pedimos el login ahí mismo
+        setIsAdmin(false);
+        setLoginIntent("admin");
+        setIsLoginOpen(true);
       }
-    };
+    } else {
+      setIsAdmin(false);
+    }
+  }, [authReady, session, pathTick]);
 
+  useEffect(() => {
+    const handlePopState = () => setPathTick((t) => t + 1);
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [session]);
+  }, []);
 
   useEffect(() => {
     setActiveSearch(searchQuery);
@@ -252,7 +258,7 @@ export default function App() {
       setCurrentView('admin');
       window.history.pushState({}, '', '/admin');
     } else if (!session) {
-      alert("Debes iniciar sesión como administrador.");
+      setLoginIntent("admin");
       setIsLoginOpen(true);
     } else {
       alert("Acceso denegado.");
@@ -269,6 +275,7 @@ export default function App() {
     if (cartItems.length === 0) return;
     if (!session) {
       setIsCartOpen(false); 
+      setLoginIntent("customer");
       setIsLoginOpen(true); 
       return; 
     }
@@ -415,7 +422,7 @@ export default function App() {
           <Navbar 
             userSession={session}
             isAdmin={session && session.user?.email === ADMIN_EMAIL}
-            onLoginClick={() => setIsLoginOpen(true)} 
+            onLoginClick={() => { setLoginIntent("customer"); setIsLoginOpen(true); }} 
             onLogoutClick={handleLogout}
             onProfileClick={() => {setCurrentView("profile"); window.scrollTo(0, 0);}}
             onHomeClick={() => {setCurrentView("home"); setIsAdmin(false); window.history.pushState({}, '', '/'); window.location.search = "";}}
@@ -510,7 +517,11 @@ export default function App() {
         </>
       )}
 
-      <LoginModal isOpen={isLoginOpen} onClose={() => setIsLoginOpen(false)} />
+      <LoginModal
+        isOpen={isLoginOpen}
+        onClose={() => setIsLoginOpen(false)}
+        defaultMode={loginIntent === "admin" ? "login" : "register"}
+      />
       <CartDrawer 
         isOpen={isCartOpen} 
         onClose={() => setIsCartOpen(false)} 
