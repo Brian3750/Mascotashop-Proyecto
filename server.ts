@@ -768,7 +768,8 @@ async function startServer() {
   // =========================================================================
   // 📦 ENDPOINT: MARCAR PEDIDO LISTO PARA RETIRO + NOTIFICACIÓN
   // =========================================================================
-  app.post('/api/admin/pedido-listo', async (req, res) => {
+  app.post('/api/admin/pedido', async (req, res, next) => {
+    if (req.body?.accion !== 'listo') return next();
     try {
       const { id_venta, id_cliente, nombre_cliente, correo_cliente, telefono_cliente, total_venta } = req.body;
 
@@ -880,7 +881,10 @@ async function startServer() {
   // =========================================================================
   // 🔄 ENDPOINT: CAMBIAR ESTADO DE PEDIDO (pendiente → en preparación)
   // =========================================================================
-  app.post('/api/admin/pedido-estado', async (req, res) => {
+  app.post('/api/admin/pedido', async (req, res) => {
+    if (req.body?.accion !== 'estado') {
+      return res.status(400).json({ error: "Falta o es inválido el campo 'accion' (usa 'estado' o 'listo')." });
+    }
     try {
       const { id_venta, estado } = req.body;
       if (!id_venta || !estado) return res.status(400).json({ error: 'Faltan datos.' });
@@ -907,7 +911,8 @@ async function startServer() {
   // =========================================================================
   // 🎁 ENDPOINT: ENVIAR CUPÓN POR WHATSAPP (TWILIO)
   // =========================================================================
-  app.post('/api/admin/enviar-cupon-whatsapp', async (req, res) => {
+  app.post('/api/admin/enviar-cupon', async (req, res, next) => {
+    if (req.body?.canal !== 'whatsapp' && !req.body?.telefono_cliente) return next();
     try {
       const { telefono_cliente, nombre_cliente, codigo_cupon, descuento, correo_cliente } = req.body;
 
