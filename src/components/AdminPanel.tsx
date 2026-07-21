@@ -1,13 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { PackageCheck, MessageSquare, Clock, Edit3, Save, Package, Plus, Trash2, Layers, BarChart3, ShieldAlert, Lock, LogOut, MailCheck, CheckCircle2 } from 'lucide-react';
+import { PackageCheck, MessageSquare, Clock, Edit3, Save, Package, Plus, Trash2, Layers, BarChart3, Lock, LogOut, MailCheck, CheckCircle2 } from 'lucide-react';
 // Importamos el nuevo Dashboard
 import AnalyticsDashboard from './AnalyticsDashboard';
 
 export default function AdminPanel() {
-  // 1. COMPROBAR EL ENTORNO: Lee si ejecutaste "npm run dev:admin"
-  const isCustomAdminMode = import.meta.env.VITE_ADMIN_MODE === 'true';
-
   const [activeTab, setActiveTab] = useState<'analytics' | 'pedidos' | 'inventario' | 'nuevo'>('analytics');
   const [pedidos, setPedidos] = useState<any[]>([]);
   const [productos, setProductos] = useState<any[]>([]);
@@ -52,16 +49,14 @@ export default function AdminPanel() {
 
   // Verificar si ya existía una sesión administrativa activa en este navegador
   useEffect(() => {
-    if (isCustomAdminMode) {
-      const sesionGuardada = localStorage.getItem('admin_console_unlocked');
-      if (sesionGuardada === 'true') {
-        setIsUnlocked(true);
-        fetchData();
-        return;
-      }
+    const sesionGuardada = localStorage.getItem('admin_console_unlocked');
+    if (sesionGuardada === 'true') {
+      setIsUnlocked(true);
+      fetchData();
+      return;
     }
     setLoading(false);
-  }, [isCustomAdminMode]);
+  }, []);
 
   const fetchData = async () => {
     setLoading(true);
@@ -323,18 +318,6 @@ export default function AdminPanel() {
       setSendingCoupon(false);
     }
   };
-
-  if (!isCustomAdminMode) {
-    return (
-      <div className="flex h-screen w-screen flex-col items-center justify-center bg-slate-950 text-white p-6 text-center font-sans">
-        <ShieldAlert className="text-rose-500 h-16 w-16 mb-4 animate-pulse" />
-        <h1 className="text-2xl font-black uppercase tracking-wider">Entorno de Servidor Restringido</h1>
-        <p className="text-slate-400 text-sm mt-2 max-w-md">
-          Este puerto local no tiene activo el módulo analítico. Ejecuta el comando exclusivo en tu terminal para habilitar el portal.
-        </p>
-      </div>
-    );
-  }
 
   if (!isUnlocked) {
     return (
