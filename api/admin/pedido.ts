@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getSupabaseServer } from "../../src/lib/supabaseServer";
-import { transporter } from "../_lib/mailer";
-import { enviarNotificacionWhatsApp } from "../_lib/whatsapp";
+import { getSupabaseServer } from "../../src/lib/supabaseServer.js";
+import { transporter } from "../_lib/mailer.js";
+import { enviarNotificacionWhatsApp } from "../_lib/whatsapp.js";
 
 // Endpoint combinado: antes eran dos funciones separadas (pedido-estado y pedido-listo).
 // Se unieron en una sola para no superar el límite de 12 funciones serverless

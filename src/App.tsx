@@ -134,22 +134,11 @@ export default function App() {
     if (!authReady) return;
 
     if (window.location.pathname === '/admin') {
-      if (session && session.user?.email === ADMIN_EMAIL) {
-        setIsAdmin(true);
-        setCurrentView('admin');
-        setIsLoginOpen(false);
-      } else if (session) {
-        // Hay una sesión iniciada, pero no es la cuenta de administrador
-        alert('Esta cuenta no tiene permisos de administrador.');
-        setIsAdmin(false);
-        setCurrentView('home');
-        window.history.replaceState({}, document.title, '/');
-      } else {
-        // No hay sesión: dejamos la URL en /admin y pedimos el login ahí mismo
-        setIsAdmin(false);
-        setLoginIntent("admin");
-        setIsLoginOpen(true);
-      }
+      // AdminPanel tiene su propia clave de acceso interna (pantalla de "Consola
+      // Administrativa"), así que no exigimos sesión de Supabase para llegar a /admin.
+      setIsAdmin(true);
+      setCurrentView('admin');
+      setIsLoginOpen(false);
     } else {
       setIsAdmin(false);
     }
@@ -253,16 +242,9 @@ export default function App() {
   };
 
   const handleAdminAccess = () => {
-    if (session && session.user.email === ADMIN_EMAIL) {
-      setIsAdmin(true);
-      setCurrentView('admin');
-      window.history.pushState({}, '', '/admin');
-    } else if (!session) {
-      setLoginIntent("admin");
-      setIsLoginOpen(true);
-    } else {
-      alert("Acceso denegado.");
-    }
+    setIsAdmin(true);
+    setCurrentView('admin');
+    window.history.pushState({}, '', '/admin');
   };
 
   const handleLogout = async () => {

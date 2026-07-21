@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getSupabaseServer } from "../src/lib/supabaseServer";
-import { tx } from "./_lib/transbank";
+import { getSupabaseServer } from "../src/lib/supabaseServer.js";
+import { tx } from "./_lib/transbank.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") return res.status(405).json({ error: "Método no permitido" });

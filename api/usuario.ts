@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getSupabaseServer } from "../src/lib/supabaseServer";
-import { getMongoDb } from "./_lib/mongo";
+import { getSupabaseServer } from "../src/lib/supabaseServer.js";
+import { getMongoDb } from "./_lib/mongo.js";
 
 // Endpoint combinado: antes eran tres funciones separadas (usuario/estadisticas,
 // usuario/compras, usuario/clicks). Se unieron en una sola para no superar el
